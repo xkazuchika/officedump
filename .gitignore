@@ -1,0 +1,4 @@
+/target
+
+# officedump の既定出力先（read --out 省略時）
+*.officedump/

@@ -1,0 +1,32 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  プロジェクト: officedump — Officeファイル（xlsx/docx/pptx）を解釈せず忠実にJSONへ分解するCLIツール
+  言語: Rust（zip + quick-xml + serde + clap を想定）
+  利用者: GitHub Copilot などの LLM エージェントがシェル経由で呼び出す
+  設計原則: 構造は正規化するが、属性は全保持し、意味・順序・整形の判断はツール側では行わない（LLMの仕事とする）
+  成果物（proposal/design/specs/tasks など）はすべて日本語で記述すること
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
