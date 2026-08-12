@@ -38,37 +38,30 @@ $ officedump inspect report.xlsx
 }
 ```
 
-### read — JSON 中間表現を出力
+### read — JSON 中間表現をファイルへ出力
 
 ```sh
 $ officedump read report.xlsx --sheet 売上 --range A1:F30
 {
   "file": "report.xlsx",
   "format": "xlsx",
-  "sheets": [
-    {
-      "name": "売上",
-      "mergedCells": ["A1:C1"],
-      "cells": [
-        { "ref": "B11", "type": "n", "value": 550, "formula": "SUM(A2:A11)" }
-      ],
-      "unhandledElements": []
-    }
-  ],
-  "media": [
-    {
-      "ref": "media/image1.png",
-      "anchor": { "sheet": "売上", "anchorType": "twoCellAnchor",
-                  "placement": "floating", "from": { "col": 1, "row": 3, ... } }
-    }
-  ]
+  "content": "/absolute/path/report.officedump/content.json",
+  "mediaDir": "/absolute/path/report.officedump/media",
+  "summary": { "sheets": 1, "cells": 180, "media": 2 }
 }
 ```
 
-- 画像などのメディアは `<出力先>/media/` に元バイナリのまま抽出され、JSON からはパスで参照します
-- 出力先は `--out <dir>` で指定。省略時は `<ファイル名>.officedump/`
+- 分解 JSON 全量は `<出力先>/content.json` に書き出され、stdout は小さい manifest だけを返します
+- 画像などのメディアは `<出力先>/media/` に元バイナリのまま抽出され、content.json からはパスで参照します
+- 出力先は `--out <dir>` で指定。省略時は `<ファイル名のstem>.officedump/`
 - `--range` は `A1:F50`（範囲）、`A:C`（列）、`1:30`（行）を指定できます
 - エラーは非ゼロ終了コード + 標準エラーへの JSON で報告します（エージェントが機械処理可能）
+
+小さいファイルをパイプ処理したい場合だけ、全 JSON をstdoutへ出します。
+
+```sh
+officedump read report.xlsx --sheet 売上 --range A1:F30 --stdout
+```
 
 ### docx の段階的な読み出し
 
@@ -86,6 +79,12 @@ $ officedump read report.docx --para 1:20
 - docx は本文の段落/ラン/表、ヘッダー/フッター、ハイパーリンク、フィールドを構造化します
 - `--para N:M` は本文ブロックの範囲だけを出力します。ヘッダー/フッターは常に保持します
 - docx の画像はインライン/フローティングの配置、ブロック/ランのアンカー、EMU 座標を保持します
+
+## LLM エージェント連携
+
+Office ファイルを扱うエージェントは、まず `inspect` で構造を確認してから、範囲を絞った `read` を実行してください。`read` のstdout manifestから content.json のパスを受け取り、必要な情報だけを読めます。
+
+詳細な手順、エラー契約、将来の Skill 作成方針は [docs/agent-integration.md](docs/agent-integration.md) を参照してください。
 
 ## 対応状況
 

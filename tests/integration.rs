@@ -23,6 +23,16 @@ fn officedump(args: &[&str], cwd: &Path) -> Output {
 
 fn stdout_json(out: &Output) -> Value {
     assert!(out.status.success(), "コマンドが失敗: {:?}", out);
+    let output: Value = serde_json::from_slice(&out.stdout).expect("標準出力が JSON ではない");
+    if let Some(content) = output.get("content").and_then(Value::as_str) {
+        return serde_json::from_slice(&std::fs::read(content).expect("content.json を読めません"))
+            .expect("content.json が JSON ではない");
+    }
+    output
+}
+
+fn manifest_json(out: &Output) -> Value {
+    assert!(out.status.success(), "コマンドが失敗: {:?}", out);
     serde_json::from_slice(&out.stdout).expect("標準出力が JSON ではない")
 }
 
@@ -462,4 +472,55 @@ fn read_media_default_out_dir() {
             .exists(),
         "既定出力先に抽出されていません"
     );
+}
+
+/// 既定 read はcontent.jsonへ全IRを書き、stdoutには小さいmanifestだけを返す。
+#[test]
+fn read_uses_file_output_manifest_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_xlsx(dir.path(), "calc.xlsx", calc_parts());
+    let out_dir = dir.path().join("result");
+    let manifest = manifest_json(&officedump(
+        &[
+            "read",
+            file.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ],
+        dir.path(),
+    ));
+
+    assert_eq!(manifest["format"], "xlsx");
+    assert!(std::path::Path::new(manifest["content"].as_str().unwrap()).is_absolute());
+    assert!(std::path::Path::new(manifest["mediaDir"].as_str().unwrap()).is_absolute());
+    assert_eq!(manifest["summary"]["sheets"], 1);
+    assert!(manifest["summary"]["cells"].as_u64().unwrap() > 0);
+    assert!(out_dir.join("content.json").exists());
+    assert!(out_dir.join("media").is_dir());
+    let content: Value =
+        serde_json::from_slice(&std::fs::read(out_dir.join("content.json")).unwrap()).unwrap();
+    assert!(content["sheets"].is_array());
+}
+
+/// --stdout はcontent.jsonを書かず、従来どおり全IRを標準出力へ返す。
+#[test]
+fn read_stdout_mode_omits_content_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_xlsx(dir.path(), "calc.xlsx", calc_parts());
+    let out_dir = dir.path().join("stdout-result");
+    let output = manifest_json(&officedump(
+        &[
+            "read",
+            file.to_str().unwrap(),
+            "--stdout",
+            "--out",
+            out_dir.to_str().unwrap(),
+        ],
+        dir.path(),
+    ));
+
+    assert!(output["sheets"].is_array());
+    assert!(output.get("content").is_none());
+    assert!(!out_dir.join("content.json").exists());
+    assert!(out_dir.join("media").is_dir());
 }

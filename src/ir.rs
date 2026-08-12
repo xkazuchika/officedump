@@ -228,6 +228,34 @@ pub struct MediaItem {
     pub anchor: Option<MediaAnchor>,
 }
 
+/// read の既定標準出力。全 IR ではなく、次に読むべきファイルを示す。
+#[derive(Debug, Serialize)]
+pub struct ReadManifest {
+    pub file: String,
+    pub format: String,
+    /// content.json の絶対パス
+    pub content: String,
+    #[serde(rename = "mediaDir")]
+    /// media ディレクトリの絶対パス
+    pub media_dir: String,
+    pub summary: ReadSummary,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum ReadSummary {
+    Xlsx {
+        sheets: usize,
+        cells: usize,
+        media: usize,
+    },
+    Docx {
+        sections: usize,
+        blocks: usize,
+        media: usize,
+    },
+}
+
 /// メディアの位置情報。xlsx は sheet/from/to、docx は section/block/run を基準にする。
 /// 座標・サイズの生値を保持し、読み順や意味の解釈は行わない。
 #[derive(Debug, Serialize)]

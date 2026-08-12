@@ -20,6 +20,16 @@ fn officedump(args: &[&str], cwd: &Path) -> Output {
 
 fn stdout_json(out: &Output) -> Value {
     assert!(out.status.success(), "コマンドが失敗: {out:?}");
+    let output: Value = serde_json::from_slice(&out.stdout).expect("標準出力が JSON ではない");
+    if let Some(content) = output.get("content").and_then(Value::as_str) {
+        return serde_json::from_slice(&std::fs::read(content).expect("content.json を読めません"))
+            .expect("content.json が JSON ではない");
+    }
+    output
+}
+
+fn manifest_json(out: &Output) -> Value {
+    assert!(out.status.success(), "コマンドが失敗: {out:?}");
     serde_json::from_slice(&out.stdout).expect("標準出力が JSON ではない")
 }
 
@@ -271,4 +281,43 @@ fn rejects_unsupported_extension_with_json_error() {
     let out = officedump(&["read", file.to_str().unwrap()], dir.path());
     assert!(!out.status.success());
     assert_eq!(stderr_json(&out)["error"]["kind"], "unsupported_format");
+}
+
+#[test]
+fn read_docx_uses_manifest_and_stdout_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "report.docx", comprehensive_parts());
+    let out_dir = dir.path().join("result");
+    let manifest = manifest_json(&officedump(
+        &[
+            "read",
+            file.to_str().unwrap(),
+            "--out",
+            out_dir.to_str().unwrap(),
+        ],
+        dir.path(),
+    ));
+
+    assert_eq!(manifest["format"], "docx");
+    assert!(std::path::Path::new(manifest["content"].as_str().unwrap()).is_absolute());
+    assert_eq!(manifest["summary"]["sections"], 2);
+    assert!(manifest["summary"]["blocks"].as_u64().unwrap() > 0);
+    assert!(out_dir.join("content.json").exists());
+    assert!(out_dir.join("media").is_dir());
+
+    let stdout_dir = dir.path().join("stdout-result");
+    let output = manifest_json(&officedump(
+        &[
+            "read",
+            file.to_str().unwrap(),
+            "--stdout",
+            "--out",
+            stdout_dir.to_str().unwrap(),
+        ],
+        dir.path(),
+    ));
+    assert!(output["sections"].is_array());
+    assert!(output.get("content").is_none());
+    assert!(!stdout_dir.join("content.json").exists());
+    assert!(stdout_dir.join("media").is_dir());
 }

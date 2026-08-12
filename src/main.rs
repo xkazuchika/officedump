@@ -2,6 +2,7 @@ mod docx;
 mod error;
 mod ir;
 mod media;
+mod output;
 mod package;
 mod range;
 mod xlsx;
@@ -14,8 +15,9 @@ use clap::{Parser, Subcommand};
 use error::{AppError, report};
 use ir::{
     DocxInspectOutput, DocxReadOutput, DocxSectionSummary, InspectOutput, MediaAnchor, ReadOutput,
-    SheetDump, SheetSummary,
+    ReadSummary, SheetDump, SheetSummary,
 };
+use output::{OutputPaths, emit_read};
 use package::{OfficeFormat, OfficePackage};
 use range::RangeFilter;
 
@@ -31,7 +33,7 @@ struct Cli {
 enum Command {
     /// 構造概要を JSON で返す
     Inspect { file: PathBuf },
-    /// 分解した JSON IR を標準出力に出す
+    /// 分解結果を content.json に書き出し、標準出力へ manifest を返す
     Read {
         file: PathBuf,
         /// xlsx の対象シート名（省略時は全シート）
@@ -43,6 +45,9 @@ enum Command {
         /// docx の本文ブロック範囲（例: 1:10）
         #[arg(long)]
         para: Option<String>,
+        /// 分解 JSON 全量を標準出力へ出す（content.json は生成しない）
+        #[arg(long)]
+        stdout: bool,
         /// メディア等の出力先（省略時は <ファイル名>.officedump/）
         #[arg(long)]
         out: Option<PathBuf>,
@@ -58,12 +63,14 @@ fn main() {
             sheet,
             range,
             para,
+            stdout,
             out,
         } => run_read(
             &file,
             sheet.as_deref(),
             range.as_deref(),
             para.as_deref(),
+            stdout,
             out.as_deref(),
         ),
     };
@@ -99,14 +106,6 @@ fn rels_path_of(part_path: &str) -> String {
     format!("{}/_rels/{}.rels", dirname(part_path), basename(part_path))
 }
 
-fn default_out_dir(file: &Path) -> PathBuf {
-    let stem = file
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "out".to_string());
-    PathBuf::from(format!("{stem}.officedump"))
-}
-
 fn run_inspect(file: &Path) -> Result<(), AppError> {
     match detect_format(file)? {
         OfficeFormat::Xlsx => run_inspect_xlsx(file),
@@ -119,6 +118,7 @@ fn run_read(
     sheet: Option<&str>,
     range: Option<&str>,
     para: Option<&str>,
+    stdout: bool,
     out: Option<&Path>,
 ) -> Result<(), AppError> {
     match detect_format(file)? {
@@ -126,7 +126,7 @@ fn run_read(
             if para.is_some() {
                 return Err(AppError::Usage("--para は docx 専用です".to_string()));
             }
-            run_read_xlsx(file, sheet, range, out)
+            run_read_xlsx(file, sheet, range, stdout, out)
         }
         OfficeFormat::Docx => {
             if sheet.is_some() || range.is_some() {
@@ -134,7 +134,7 @@ fn run_read(
                     "--sheet と --range は xlsx 専用です".to_string(),
                 ));
             }
-            run_read_docx(file, para, out)
+            run_read_docx(file, para, stdout, out)
         }
     }
 }
@@ -177,6 +177,7 @@ fn run_read_xlsx(
     file: &Path,
     sheet_filter: Option<&str>,
     range: Option<&str>,
+    stdout: bool,
     out: Option<&Path>,
 ) -> Result<(), AppError> {
     let filter = range
@@ -200,10 +201,8 @@ fn run_read_xlsx(
         .map(|xml| xlsx::parse_styles(&xml))
         .transpose()?
         .unwrap_or_default();
-    let extracted = package.extract_media(
-        &out.map(Path::to_path_buf)
-            .unwrap_or_else(|| default_out_dir(file)),
-    )?;
+    let paths = OutputPaths::resolve(file, out)?;
+    let extracted = package.extract_media(paths.root())?;
     let mut dumps = Vec::new();
     let mut anchors = Vec::new();
 
@@ -232,17 +231,25 @@ fn run_read_xlsx(
             unhandled: parsed.unhandled,
         });
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&ReadOutput {
-            file: file_label(file),
-            format: "xlsx".to_string(),
-            sheets: dumps,
-            media: media::build_media_items(&extracted, anchors)?,
-        })
-        .unwrap()
-    );
-    Ok(())
+    let content = ReadOutput {
+        file: file_label(file),
+        format: "xlsx".to_string(),
+        sheets: dumps,
+        media: media::build_media_items(&extracted, anchors)?,
+    };
+    let summary = ReadSummary::Xlsx {
+        sheets: content.sheets.len(),
+        cells: content.sheets.iter().map(|sheet| sheet.cells.len()).sum(),
+        media: content.media.len(),
+    };
+    emit_read(
+        &paths,
+        stdout,
+        content.file.clone(),
+        content.format.clone(),
+        summary,
+        &content,
+    )
 }
 
 fn run_inspect_docx(file: &Path) -> Result<(), AppError> {
@@ -274,7 +281,12 @@ fn run_inspect_docx(file: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-fn run_read_docx(file: &Path, para: Option<&str>, out: Option<&Path>) -> Result<(), AppError> {
+fn run_read_docx(
+    file: &Path,
+    para: Option<&str>,
+    stdout: bool,
+    out: Option<&Path>,
+) -> Result<(), AppError> {
     let para_range = para.map(range::parse_block_range).transpose()?;
     let mut package = OfficePackage::open(file, OfficeFormat::Docx)?;
     let styles = package
@@ -282,10 +294,8 @@ fn run_read_docx(file: &Path, para: Option<&str>, out: Option<&Path>) -> Result<
         .map(|xml| docx::parse_styles(&xml))
         .transpose()?
         .unwrap_or_default();
-    let out_dir = out
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| default_out_dir(file));
-    let extracted = package.extract_media(&out_dir)?;
+    let paths = OutputPaths::resolve(file, out)?;
+    let extracted = package.extract_media(paths.root())?;
     let document = docx::parse_document(&mut package, &styles, para_range)?;
     let rels = xmlutil::parse_rels(&package.read_part("word/_rels/document.xml.rels")?)?;
     let mut anchored = Vec::new();
@@ -324,16 +334,28 @@ fn run_read_docx(file: &Path, para: Option<&str>, out: Option<&Path>) -> Result<
             },
         ));
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&DocxReadOutput {
-            file: file_label(file),
-            format: "docx".to_string(),
-            sections: document.sections,
-            media: media::assemble_media_items(&extracted, anchored, OfficeFormat::Docx)?,
-            unhandled: document.unhandled,
-        })
-        .unwrap()
-    );
-    Ok(())
+    let content = DocxReadOutput {
+        file: file_label(file),
+        format: "docx".to_string(),
+        sections: document.sections,
+        media: media::assemble_media_items(&extracted, anchored, OfficeFormat::Docx)?,
+        unhandled: document.unhandled,
+    };
+    let summary = ReadSummary::Docx {
+        sections: content.sections.len(),
+        blocks: content
+            .sections
+            .iter()
+            .map(|section| section.blocks.len())
+            .sum(),
+        media: content.media.len(),
+    };
+    emit_read(
+        &paths,
+        stdout,
+        content.file.clone(),
+        content.format.clone(),
+        summary,
+        &content,
+    )
 }

@@ -12,6 +12,7 @@ pub enum AppError {
     SheetNotFound(String),
     UnsupportedFormat(String),
     Usage(String),
+    Output(String),
 }
 
 impl AppError {
@@ -26,6 +27,7 @@ impl AppError {
             AppError::SheetNotFound(_) => "sheet_not_found",
             AppError::UnsupportedFormat(_) => "unsupported_format",
             AppError::Usage(_) => "usage_error",
+            AppError::Output(_) => "output_error",
         }
     }
 }
@@ -42,6 +44,7 @@ impl fmt::Display for AppError {
             AppError::SheetNotFound(m) => write!(f, "シートが見つかりません: {m}"),
             AppError::UnsupportedFormat(m) => write!(f, "未対応の形式: {m}"),
             AppError::Usage(m) => write!(f, "使い方エラー: {m}"),
+            AppError::Output(m) => write!(f, "出力エラー: {m}"),
         }
     }
 }
