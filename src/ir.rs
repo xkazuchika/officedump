@@ -104,6 +104,93 @@ pub struct DocxReadOutput {
     pub unhandled: Vec<RawElement>,
 }
 
+// ---------------------------------------------------------------------------
+// pptx
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct PptxInspectOutput {
+    pub file: String,
+    pub format: String,
+    pub slides: usize,
+    pub titles: Vec<SlideTitle>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SlideTitle {
+    pub index: u32,
+    pub title: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PptxReadOutput {
+    pub file: String,
+    pub format: String,
+    pub slides: Vec<PptxSlide>,
+    pub media: Vec<MediaItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PptxSlide {
+    pub index: u32,
+    pub shapes: Vec<PptxShape>,
+    #[serde(rename = "unhandledElements")]
+    pub unhandled: Vec<RawElement>,
+}
+
+/// 図形ツリーの順序とgeometryを保つ。読み順の解釈はしない。
+#[derive(Debug, Serialize)]
+pub struct PptxShape {
+    #[serde(rename = "type")]
+    pub shape_type: String,
+    #[serde(rename = "zOrder")]
+    pub z_order: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<Geometry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<PptxTextFrame>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<PptxTable>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Geometry {
+    pub x: i64,
+    pub y: i64,
+    pub cx: i64,
+    pub cy: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PptxTextFrame {
+    pub paragraphs: Vec<PptxParagraph>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PptxParagraph {
+    pub runs: Vec<TextRun>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PptxTable {
+    pub columns: Vec<i64>,
+    pub rows: Vec<PptxTableRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PptxTableRow {
+    pub cells: Vec<PptxTableCell>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PptxTableCell {
+    pub text: PptxTextFrame,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DocxSection {
     #[serde(rename = "type")]
@@ -254,6 +341,11 @@ pub enum ReadSummary {
         blocks: usize,
         media: usize,
     },
+    Pptx {
+        slides: usize,
+        shapes: usize,
+        media: usize,
+    },
 }
 
 /// メディアの位置情報。xlsx は sheet/from/to、docx は section/block/run を基準にする。
@@ -269,6 +361,13 @@ pub struct MediaAnchor {
     pub to: Option<AnchorPoint>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pos: Option<AnchorPos>,
+    // pptx
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slide: Option<u32>,
+    #[serde(rename = "zOrder", skip_serializing_if = "Option::is_none")]
+    pub z_order: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<Geometry>,
     // docx
     #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,

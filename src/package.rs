@@ -13,6 +13,7 @@ use crate::error::AppError;
 pub enum OfficeFormat {
     Xlsx,
     Docx,
+    Pptx,
 }
 
 impl OfficeFormat {
@@ -20,6 +21,7 @@ impl OfficeFormat {
         match self {
             OfficeFormat::Xlsx => "xl/media/",
             OfficeFormat::Docx => "word/media/",
+            OfficeFormat::Pptx => "ppt/media/",
         }
     }
 
@@ -28,6 +30,7 @@ impl OfficeFormat {
         match self {
             OfficeFormat::Xlsx => AppError::InvalidXlsx(msg),
             OfficeFormat::Docx => AppError::InvalidDocx(msg),
+            OfficeFormat::Pptx => AppError::InvalidPptx(msg),
         }
     }
 }

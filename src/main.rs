@@ -4,6 +4,7 @@ mod ir;
 mod media;
 mod output;
 mod package;
+mod pptx;
 mod range;
 mod xlsx;
 mod xmlutil;
@@ -14,8 +15,9 @@ use clap::{Parser, Subcommand};
 
 use error::{AppError, report};
 use ir::{
-    DocxInspectOutput, DocxReadOutput, DocxSectionSummary, InspectOutput, MediaAnchor, ReadOutput,
-    ReadSummary, SheetDump, SheetSummary,
+    DocxInspectOutput, DocxReadOutput, DocxSectionSummary, InspectOutput, MediaAnchor,
+    PptxInspectOutput, PptxReadOutput, ReadOutput, ReadSummary, SheetDump, SheetSummary,
+    SlideTitle,
 };
 use output::{OutputPaths, emit_read};
 use package::{OfficeFormat, OfficePackage};
@@ -45,6 +47,9 @@ enum Command {
         /// docx の本文ブロック範囲（例: 1:10）
         #[arg(long)]
         para: Option<String>,
+        /// pptx のスライド範囲（例: 1:10）
+        #[arg(long)]
+        slide: Option<String>,
         /// 分解 JSON 全量を標準出力へ出す（content.json は生成しない）
         #[arg(long)]
         stdout: bool,
@@ -63,6 +68,7 @@ fn main() {
             sheet,
             range,
             para,
+            slide,
             stdout,
             out,
         } => run_read(
@@ -70,6 +76,7 @@ fn main() {
             sheet.as_deref(),
             range.as_deref(),
             para.as_deref(),
+            slide.as_deref(),
             stdout,
             out.as_deref(),
         ),
@@ -83,6 +90,7 @@ fn detect_format(file: &Path) -> Result<OfficeFormat, AppError> {
     match file.extension().and_then(|e| e.to_str()) {
         Some("xlsx") => Ok(OfficeFormat::Xlsx),
         Some("docx") => Ok(OfficeFormat::Docx),
+        Some("pptx") => Ok(OfficeFormat::Pptx),
         Some(ext) => Err(AppError::UnsupportedFormat(format!(".{ext}"))),
         None => Err(AppError::UnsupportedFormat("拡張子なし".to_string())),
     }
@@ -110,6 +118,7 @@ fn run_inspect(file: &Path) -> Result<(), AppError> {
     match detect_format(file)? {
         OfficeFormat::Xlsx => run_inspect_xlsx(file),
         OfficeFormat::Docx => run_inspect_docx(file),
+        OfficeFormat::Pptx => run_inspect_pptx(file),
     }
 }
 
@@ -118,23 +127,34 @@ fn run_read(
     sheet: Option<&str>,
     range: Option<&str>,
     para: Option<&str>,
+    slide: Option<&str>,
     stdout: bool,
     out: Option<&Path>,
 ) -> Result<(), AppError> {
     match detect_format(file)? {
         OfficeFormat::Xlsx => {
-            if para.is_some() {
-                return Err(AppError::Usage("--para は docx 専用です".to_string()));
+            if para.is_some() || slide.is_some() {
+                return Err(AppError::Usage(
+                    "--para は docx 専用、--slide は pptx 専用です".to_string(),
+                ));
             }
             run_read_xlsx(file, sheet, range, stdout, out)
         }
         OfficeFormat::Docx => {
-            if sheet.is_some() || range.is_some() {
+            if sheet.is_some() || range.is_some() || slide.is_some() {
                 return Err(AppError::Usage(
-                    "--sheet と --range は xlsx 専用です".to_string(),
+                    "--sheet と --range は xlsx 専用、--slide は pptx 専用です".to_string(),
                 ));
             }
             run_read_docx(file, para, stdout, out)
+        }
+        OfficeFormat::Pptx => {
+            if sheet.is_some() || range.is_some() || para.is_some() {
+                return Err(AppError::Usage(
+                    "--sheet/--range は xlsx 専用、--para は docx 専用です".to_string(),
+                ));
+            }
+            run_read_pptx(file, slide, stdout, out)
         }
     }
 }
@@ -322,6 +342,9 @@ fn run_read_docx(
                 from: None,
                 to: None,
                 pos: None,
+                slide: None,
+                z_order: None,
+                geometry: None,
                 section: Some(drawing.section),
                 block: Some(drawing.block),
                 run: Some(drawing.run),
@@ -348,6 +371,119 @@ fn run_read_docx(
             .iter()
             .map(|section| section.blocks.len())
             .sum(),
+        media: content.media.len(),
+    };
+    emit_read(
+        &paths,
+        stdout,
+        content.file.clone(),
+        content.format.clone(),
+        summary,
+        &content,
+    )
+}
+
+fn open_pptx(file: &Path) -> Result<(OfficePackage, Vec<pptx::SlideMeta>), AppError> {
+    let mut package = OfficePackage::open(file, OfficeFormat::Pptx)?;
+    let presentation = package.read_part("ppt/presentation.xml")?;
+    let rels = xmlutil::parse_rels(&package.read_part("ppt/_rels/presentation.xml.rels")?)?;
+    let slides = pptx::parse_presentation(&presentation, &rels)?;
+    Ok((package, slides))
+}
+
+fn run_inspect_pptx(file: &Path) -> Result<(), AppError> {
+    let (mut package, slides) = open_pptx(file)?;
+    let mut titles = Vec::new();
+    for meta in &slides {
+        let parsed = pptx::parse_slide(&package.read_part(&meta.path)?, meta.index)?;
+        if let Some(title) = pptx::title(&parsed.slide) {
+            titles.push(SlideTitle {
+                index: meta.index,
+                title,
+            });
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&PptxInspectOutput {
+            file: file_label(file),
+            format: "pptx".to_string(),
+            slides: slides.len(),
+            titles,
+        })
+        .unwrap()
+    );
+    Ok(())
+}
+
+fn run_read_pptx(
+    file: &Path,
+    slide: Option<&str>,
+    stdout: bool,
+    out: Option<&Path>,
+) -> Result<(), AppError> {
+    let range = slide.map(range::parse_block_range).transpose()?;
+    let (mut package, slides) = open_pptx(file)?;
+    let paths = OutputPaths::resolve(file, out)?;
+    let extracted = package.extract_media(paths.root())?;
+    let mut output_slides = Vec::new();
+    let mut anchored = Vec::new();
+
+    for meta in slides {
+        if let Some((from, to)) = range
+            && !(from..=to).contains(&meta.index)
+        {
+            continue;
+        }
+        let parsed = pptx::parse_slide(&package.read_part(&meta.path)?, meta.index)?;
+        let rels = package
+            .read_part_opt(&rels_path_of(&meta.path))?
+            .map(|xml| xmlutil::parse_rels(&xml))
+            .transpose()?
+            .unwrap_or_default();
+        for media in parsed.media {
+            let target = rels.get(&media.embed_rid).ok_or_else(|| {
+                AppError::InvalidPptx(format!(
+                    "スライド{}の画像リレーション {} が見つかりません",
+                    meta.index, media.embed_rid
+                ))
+            })?;
+            let part = xmlutil::resolve_target(dirname(&meta.path), target);
+            let json_ref = format!("media/{}", basename(&part));
+            anchored.push((
+                json_ref,
+                MediaAnchor {
+                    sheet: None,
+                    from: None,
+                    to: None,
+                    pos: None,
+                    slide: Some(media.slide),
+                    z_order: Some(media.z_order),
+                    geometry: media.geometry,
+                    section: None,
+                    block: None,
+                    run: None,
+                    pos_h: None,
+                    pos_v: None,
+                    anchor_type: "picture".to_string(),
+                    placement: "floating".to_string(),
+                    name: media.name,
+                    ext: None,
+                },
+            ));
+        }
+        output_slides.push(parsed.slide);
+    }
+
+    let content = PptxReadOutput {
+        file: file_label(file),
+        format: "pptx".to_string(),
+        slides: output_slides,
+        media: media::assemble_media_items(&extracted, anchored, OfficeFormat::Pptx)?,
+    };
+    let summary = ReadSummary::Pptx {
+        slides: content.slides.len(),
+        shapes: content.slides.iter().map(|slide| slide.shapes.len()).sum(),
         media: content.media.len(),
     };
     emit_read(

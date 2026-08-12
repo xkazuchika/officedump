@@ -28,6 +28,7 @@ Office ファイルを読む必要があるときは、次の順で実行しま�
 ```sh
 officedump inspect report.xlsx
 officedump inspect report.docx
+officedump inspect deck.pptx
 ```
 
 ### read
@@ -57,7 +58,7 @@ stdoutはmanifest JSONだけです。
 ```
 
 - `content` と `mediaDir` は絶対パスです
-- `summary` は xlsx では `sheets` / `cells` / `media`、docx では `sections` / `blocks` / `media` を返します
+- `summary` は xlsx では `sheets` / `cells` / `media`、docx では `sections` / `blocks` / `media`、pptx では `slides` / `shapes` / `media` を返します
 - `--out <dir>` を指定すると、そのディレクトリが出力ルートになります
 - `--out` を省略すると、カレントディレクトリの `<入力stem>.officedump/` が出力ルートになります
 - 同じ出力ルートで再実行すると `content.json` は上書きされます。複数結果を残す必要がある場合は、呼び出しごとに固有の `--out` を指定してください
@@ -91,6 +92,19 @@ officedump read report.docx --para 20:45
 - `--para N:M` は本文ブロックだけを絞ります
 - ヘッダー/フッターは常に content.json に保持されます
 
+### pptx
+
+`inspect` でスライド数とタイトルプレースホルダーを見てから、対象スライドを `--slide` で指定します。
+
+```sh
+officedump inspect deck.pptx
+officedump read deck.pptx --slide 5:12
+```
+
+- `--slide N:M` は1始まりのスライド範囲を絞ります
+- 図形の `zOrder`、EMU生値の `geometry`、テキストラン、表、画像アンカーを保持します
+- 読み順や図形・スライドの意味は推測しません
+
 ## `--stdout` を使う場合
 
 `--stdout` は分解 JSON 全量をstdoutへ出し、`content.json` を作りません。
@@ -114,15 +128,15 @@ officedump read small.xlsx --stdout
 {
   "error": {
     "kind": "unsupported_format",
-    "message": "未対応の形式: .pptx"
+    "message": "必須パートが見つかりません: ppt/presentation.xml"
   }
 }
 ```
 
 エージェントは `kind` を見て次の行動を判断してください。
 
-- `unsupported_format`: 現状は xlsx / docx のみ。別手段を使うか、対応changeを提案する
-- `invalid_xlsx` / `invalid_docx`: ファイル破損または対応外の構造。利用者へ報告する
+- `unsupported_format`: xlsx / docx / pptx 以外の形式。別手段を使うか、対応changeを提案する
+- `invalid_xlsx` / `invalid_docx` / `invalid_pptx`: ファイル破損または対応外の構造。利用者へ報告する
 - `missing_part`: 不完全なOOXMLパッケージ。利用者へ報告する
 - `invalid_range`: 範囲指定を見直し、`inspect` 結果から再試行する
 - `sheet_not_found`: シート名を `inspect` の結果で確認する
@@ -133,7 +147,7 @@ officedump read small.xlsx --stdout
 Skillはこの資料の利用手順を要約し、対象エージェントが実行できるコマンド形式に合わせます。最低限、次を含めてください。
 
 1. Officeファイルを読むときは必ず `inspect` から始める
-2. xlsx は `--sheet` / `--range`、docx は `--para` で範囲を絞る
+2. xlsx は `--sheet` / `--range`、docx は `--para`、pptx は `--slide` で範囲を絞る
 3. `read` stdoutはmanifestであり、`content` のファイルを読むこと
 4. `--stdout` は小さい出力かパイプ用途に限定する
 5. stderrのJSONエラーを解釈して再試行または利用者への報告を行う

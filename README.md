@@ -80,6 +80,23 @@ $ officedump read report.docx --para 1:20
 - `--para N:M` は本文ブロックの範囲だけを出力します。ヘッダー/フッターは常に保持します
 - docx の画像はインライン/フローティングの配置、ブロック/ランのアンカー、EMU 座標を保持します
 
+### pptx の段階的な読み出し
+
+```sh
+$ officedump inspect deck.pptx
+{
+  "format": "pptx",
+  "slides": 24,
+  "titles": [{ "index": 1, "title": "四半期レビュー" }]
+}
+
+$ officedump read deck.pptx --slide 1:5
+```
+
+- pptx は `presentation.xml` のスライド順に、基本図形・テキスト段落/ラン・表・画像を構造化します
+- 図形ツリー順は `zOrder`、位置とサイズは `geometry` の EMU 生値（`x` / `y` / `cx` / `cy`）で保持します
+- `--slide N:M` で対象スライドを絞れます。読み順やスライド内容の意味づけは行いません
+
 ## LLM エージェント連携
 
 Office ファイルを扱うエージェントは、まず `inspect` で構造を確認してから、範囲を絞った `read` を実行してください。`read` のstdout manifestから content.json のパスを受け取り、必要な情報だけを読めます。
@@ -92,7 +109,7 @@ Office ファイルを扱うエージェントは、まず `inspect` で構造�
 |---|---|
 | xlsx | ✅ MVP 対応済み |
 | docx | ✅ MVP 対応済み |
-| pptx | 未対応（予定） |
+| pptx | ✅ MVP 対応済み |
 | MCP サーバー化 | 未対応（予定） |
 
 旧バイナリ形式（.xls / .doc / .ppt）は対象外です。

@@ -276,7 +276,7 @@ fn read_filters_body_by_block_range() {
 #[test]
 fn rejects_unsupported_extension_with_json_error() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("unsupported.pptx");
+    let file = dir.path().join("unsupported.pdf");
     std::fs::write(&file, b"not relevant").unwrap();
     let out = officedump(&["read", file.to_str().unwrap()], dir.path());
     assert!(!out.status.success());
