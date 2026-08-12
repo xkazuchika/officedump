@@ -1,158 +1,15 @@
 //! xlsx（SpreadsheetML）プロファイル: zip + XML を自前で剥がし、IR を構築する。
 
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
 
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use serde_json::Value;
-use zip::ZipArchive;
 
 use crate::error::AppError;
 use crate::ir::{Cell, CellStyle, RawElement};
 use crate::range::{RangeFilter, num_to_col, parse_cell_ref};
-
-/// 未知要素の生 XML 保持の上限（これを超えたら truncated フラグを立てる）
-const RAW_CAPTURE_LIMIT: usize = 100_000;
-
-/// xlsx パッケージ（zip コンテナ）へのアクセス層。
-pub struct XlsxPackage {
-    zip: ZipArchive<File>,
-}
-
-impl XlsxPackage {
-    pub fn open(path: &Path) -> Result<Self, AppError> {
-        let file = File::open(path)?;
-        let zip = ZipArchive::new(file)
-            .map_err(|e| AppError::InvalidXlsx(format!("zip として開けません: {e}")))?;
-        Ok(Self { zip })
-    }
-
-    /// 指定パートを文字列として読む。存在しなければ MissingPart。
-    pub fn read_part(&mut self, name: &str) -> Result<String, AppError> {
-        match self.zip.by_name(name) {
-            Ok(mut f) => {
-                let mut buf = String::new();
-                f.read_to_string(&mut buf).map_err(|_| {
-                    AppError::InvalidXlsx(format!("{name} が UTF-8 テキストとして読めません"))
-                })?;
-                Ok(buf)
-            }
-            Err(_) => Err(AppError::MissingPart(name.to_string())),
-        }
-    }
-
-    /// 存在しなければ Ok(None) を返す版。
-    pub fn read_part_opt(&mut self, name: &str) -> Result<Option<String>, AppError> {
-        match self.read_part(name) {
-            Ok(s) => Ok(Some(s)),
-            Err(AppError::MissingPart(_)) => Ok(None),
-            Err(e) => Err(e),
-        }
-    }
-
-    /// `xl/media/` 以下の全ファイルを `<out_dir>/media/` に元バイナリのまま抽出し、
-    /// JSON からの参照パス（"media/<name>"）の一覧を返す。
-    pub fn extract_media(&mut self, out_dir: &Path) -> Result<Vec<String>, AppError> {
-        let names: Vec<String> = self
-            .zip
-            .file_names()
-            .filter(|n| n.starts_with("xl/media/") && !n.ends_with('/'))
-            .map(|s| s.to_string())
-            .collect();
-        let mut refs = Vec::new();
-        if names.is_empty() {
-            return Ok(refs);
-        }
-        let media_dir = out_dir.join("media");
-        std::fs::create_dir_all(&media_dir)?;
-        for name in names {
-            let base = name.rsplit('/').next().unwrap_or(&name).to_string();
-            let mut buf = Vec::new();
-            self.zip
-                .by_name(&name)
-                .map_err(|e| AppError::InvalidXlsx(format!("{name} を開けません: {e}")))?
-                .read_to_end(&mut buf)?;
-            std::fs::write(media_dir.join(&base), &buf)?;
-            refs.push(format!("media/{base}"));
-        }
-        refs.sort();
-        Ok(refs)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// XML ヘルパー
-// ---------------------------------------------------------------------------
-
-pub(crate) fn local_name(raw: &[u8]) -> &[u8] {
-    match raw.iter().rposition(|&b| b == b':') {
-        Some(i) => &raw[i + 1..],
-        None => raw,
-    }
-}
-
-pub(crate) fn attr_value(e: &BytesStart, key: &str) -> Option<String> {
-    e.attributes()
-        .flatten()
-        .find(|a| a.key.as_ref() == key.as_bytes())
-        .map(|a| {
-            a.unescape_value()
-                .map(|c| c.into_owned())
-                .unwrap_or_else(|_| String::from_utf8_lossy(&a.value).into_owned())
-        })
-}
-
-pub(crate) fn text_content(t: &quick_xml::events::BytesText) -> String {
-    t.unescape()
-        .map(|c| c.into_owned())
-        .unwrap_or_else(|_| String::from_utf8_lossy(t.as_ref()).into_owned())
-}
-
-/// リレーションシップの Target を zip 内パスへ正規化する。
-/// 例: ("xl", "worksheets/sheet1.xml") -> "xl/worksheets/sheet1.xml"
-///     ("xl/worksheets", "../drawings/drawing1.xml") -> "xl/drawings/drawing1.xml"
-pub(crate) fn resolve_target(base_dir: &str, target: &str) -> String {
-    if let Some(stripped) = target.strip_prefix('/') {
-        return stripped.to_string();
-    }
-    let mut parts: Vec<&str> = base_dir.split('/').filter(|s| !s.is_empty()).collect();
-    for seg in target.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            s => parts.push(s),
-        }
-    }
-    parts.join("/")
-}
-
-/// `.rels` を Id -> Target の対応表にする。
-pub(crate) fn parse_rels(xml: &str) -> Result<HashMap<String, String>, AppError> {
-    let mut map = HashMap::new();
-    let mut reader = Reader::from_str(xml);
-    loop {
-        match reader.read_event() {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e))
-                if local_name(e.name().as_ref()) == b"Relationship" =>
-            {
-                if let (Some(id), Some(target)) =
-                    (attr_value(&e, "Id"), attr_value(&e, "Target"))
-                {
-                    map.insert(id, target);
-                }
-            }
-            Ok(Event::Eof) => break,
-            Err(e) => return Err(AppError::Xml(format!("リレーションシップのパース失敗: {e}"))),
-            _ => {}
-        }
-    }
-    Ok(map)
-}
+use crate::xmlutil::{attr_value, capture_element, local_name, raw_slice, text_content};
 
 // ---------------------------------------------------------------------------
 // workbook / sharedStrings / styles
@@ -179,13 +36,13 @@ pub fn parse_workbook(
                     AppError::InvalidXlsx(format!("シート '{name}' に r:id がありません"))
                 })?;
                 let target = rels.get(&rid).ok_or_else(|| {
-                    AppError::InvalidXlsx(
-                        format!("シート '{name}' のリレーション {rid} が見つかりません"),
-                    )
+                    AppError::InvalidXlsx(format!(
+                        "シート '{name}' のリレーション {rid} が見つかりません"
+                    ))
                 })?;
                 sheets.push(SheetMeta {
                     name,
-                    path: resolve_target("xl", target),
+                    path: crate::xmlutil::resolve_target("xl", target),
                 });
             }
             Ok(Event::Eof) => break,
@@ -235,7 +92,9 @@ pub fn parse_shared_strings(xml: &str) -> Result<Vec<String>, AppError> {
             }
             Ok(Event::Eof) => break,
             Err(e) => {
-                return Err(AppError::Xml(format!("sharedStrings.xml のパース失敗: {e}")));
+                return Err(AppError::Xml(format!(
+                    "sharedStrings.xml のパース失敗: {e}"
+                )));
             }
             _ => {}
         }
@@ -406,54 +265,6 @@ fn finalize_cell(
     })
 }
 
-fn make_raw(xml: &str, start: u64, end: u64, lname: &[u8]) -> RawElement {
-    let raw = &xml[start as usize..(end as usize).min(xml.len())];
-    let (text, truncated) = if raw.len() > RAW_CAPTURE_LIMIT {
-        let mut cut = RAW_CAPTURE_LIMIT;
-        while !raw.is_char_boundary(cut) {
-            cut -= 1;
-        }
-        (raw[..cut].to_string(), true)
-    } else {
-        (raw.to_string(), false)
-    };
-    RawElement {
-        name: String::from_utf8_lossy(lname).into_owned(),
-        xml: text,
-        truncated,
-    }
-}
-
-/// 未知要素を丸ごと消費し、生 XML として保持する。
-fn capture_element_xml(
-    reader: &mut Reader<&[u8]>,
-    xml: &str,
-    start_pos: u64,
-    lname: &[u8],
-) -> Result<RawElement, AppError> {
-    let mut sub_depth = 1u32;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(_)) => sub_depth += 1,
-            Ok(Event::End(_)) => {
-                sub_depth -= 1;
-                if sub_depth == 0 {
-                    break;
-                }
-            }
-            Ok(Event::Eof) => {
-                return Err(AppError::Xml(format!(
-                    "要素 {} が閉じられていません",
-                    String::from_utf8_lossy(lname)
-                )));
-            }
-            Err(e) => return Err(AppError::Xml(format!("XML パースエラー: {e}"))),
-            _ => {}
-        }
-    }
-    Ok(make_raw(xml, start_pos, reader.buffer_position(), lname))
-}
-
 /// worksheet XML をパースする。
 /// 既知の直接子要素（dimension / sheetData / mergeCells / drawing）以外は
 /// 生 XML のまま `unhandled` に保持する（情報を落とさない）。
@@ -495,7 +306,7 @@ pub fn parse_worksheet(
                         b"dimension" => result.dimension = attr_value(&e, "ref"),
                         b"drawing" => result.drawing_rid = attr_value(&e, "r:id"),
                         _ => {
-                            let raw = capture_element_xml(&mut reader, xml, prev_pos, lname)?;
+                            let raw = capture_element(&mut reader, xml, prev_pos, lname)?;
                             result.unhandled.push(raw);
                             continue; // サブツリーごと消費済みなので depth は動かさない
                         }
@@ -527,7 +338,7 @@ pub fn parse_worksheet(
                         b"sheetData" | b"mergeCells" | b"mergeCell" | b"row" | b"c" => {}
                         _ => {
                             let end = reader.buffer_position();
-                            result.unhandled.push(make_raw(xml, prev_pos, end, lname));
+                            result.unhandled.push(raw_slice(xml, prev_pos, end, lname));
                         }
                     }
                 } else if lname == b"mergeCell" {

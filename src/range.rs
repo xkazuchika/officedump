@@ -44,7 +44,9 @@ pub fn col_to_num(letters: &str) -> Result<u32, AppError> {
     let mut n: u32 = 0;
     for ch in letters.chars() {
         if !ch.is_ascii_alphabetic() {
-            return Err(AppError::InvalidRange(format!("列指定が不正です: {letters}")));
+            return Err(AppError::InvalidRange(format!(
+                "列指定が不正です: {letters}"
+            )));
         }
         n = n * 26 + (ch.to_ascii_uppercase() as u32 - 'A' as u32 + 1);
     }
@@ -115,4 +117,23 @@ pub fn parse_range(s: &str) -> Result<RangeFilter, AppError> {
             max_row: row,
         })
     }
+}
+
+/// "1:10" -> (1, 10)。ブロック範囲（docx の --para 用）。
+pub fn parse_block_range(s: &str) -> Result<(u32, u32), AppError> {
+    let (a, b) = s.split_once(':').ok_or_else(|| {
+        AppError::InvalidRange(format!("ブロック範囲は N:M 形式で指定してください: {s}"))
+    })?;
+    let from: u32 = a
+        .parse()
+        .map_err(|_| AppError::InvalidRange(format!("ブロック範囲が不正です: {s}")))?;
+    let to: u32 = b
+        .parse()
+        .map_err(|_| AppError::InvalidRange(format!("ブロック範囲が不正です: {s}")))?;
+    if from == 0 || to < from {
+        return Err(AppError::InvalidRange(format!(
+            "ブロック範囲が不正です（1始まり、from <= to）: {s}"
+        )));
+    }
+    Ok((from, to))
 }

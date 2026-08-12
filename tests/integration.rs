@@ -34,8 +34,7 @@ fn write_xlsx(dir: &Path, name: &str, parts: Vec<(String, Vec<u8>)>) -> PathBuf 
     let path = dir.join(name);
     let file = std::fs::File::create(&path).unwrap();
     let mut zw = ZipWriter::new(file);
-    let opts =
-        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (n, data) in parts {
         zw.start_file(n, opts).unwrap();
         zw.write_all(&data).unwrap();
@@ -125,9 +124,7 @@ fn multi_sheet_parts() -> Vec<(String, Vec<u8>)> {
 
 /// 数式・日付書式・結合セル・未知要素を含むフィクスチャ（シート名: 計算）
 fn calc_parts() -> Vec<(String, Vec<u8>)> {
-    let shared = format!(
-        r#"<sst {MAIN_NS}><si><t>日付</t></si></sst>"#
-    );
+    let shared = format!(r#"<sst {MAIN_NS}><si><t>日付</t></si></sst>"#);
     let styles = format!(
         r#"<styleSheet {MAIN_NS}><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy/mm/dd"/></numFmts><cellXfs count="3"><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>"#
     );
@@ -141,9 +138,7 @@ fn calc_parts() -> Vec<(String, Vec<u8>)> {
             (r - 1) * 10
         ));
     }
-    rows.push_str(
-        r#"<row r="11"><c r="B11"><f>SUM(A2:A11)</f><v>550</v></c></row>"#,
-    );
+    rows.push_str(r#"<row r="11"><c r="B11"><f>SUM(A2:A11)</f><v>550</v></c></row>"#);
     let sheet = format!(
         r#"<worksheet {MAIN_NS} {R_NS}><dimension ref="A1:D11"/><sheetData>{rows}</sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells><dataValidations count="1"><dataValidation type="list" sqref="B1"><formula1>"a,b"</formula1></dataValidation></dataValidations></worksheet>"#
     );
@@ -462,7 +457,9 @@ fn read_media_default_out_dir() {
     let out = officedump(&["read", "media.xlsx"], dir.path());
     stdout_json(&out);
     assert!(
-        dir.path().join("media.officedump/media/image1.png").exists(),
+        dir.path()
+            .join("media.officedump/media/image1.png")
+            .exists(),
         "既定出力先に抽出されていません"
     );
 }

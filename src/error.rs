@@ -5,10 +5,13 @@ use std::fmt;
 pub enum AppError {
     Io(std::io::Error),
     InvalidXlsx(String),
+    InvalidDocx(String),
     MissingPart(String),
     Xml(String),
     InvalidRange(String),
     SheetNotFound(String),
+    UnsupportedFormat(String),
+    Usage(String),
 }
 
 impl AppError {
@@ -16,10 +19,13 @@ impl AppError {
         match self {
             AppError::Io(_) => "io_error",
             AppError::InvalidXlsx(_) => "invalid_xlsx",
+            AppError::InvalidDocx(_) => "invalid_docx",
             AppError::MissingPart(_) => "missing_part",
             AppError::Xml(_) => "xml_error",
             AppError::InvalidRange(_) => "invalid_range",
             AppError::SheetNotFound(_) => "sheet_not_found",
+            AppError::UnsupportedFormat(_) => "unsupported_format",
+            AppError::Usage(_) => "usage_error",
         }
     }
 }
@@ -29,10 +35,13 @@ impl fmt::Display for AppError {
         match self {
             AppError::Io(e) => write!(f, "I/Oエラー: {e}"),
             AppError::InvalidXlsx(m) => write!(f, "xlsx として不正: {m}"),
+            AppError::InvalidDocx(m) => write!(f, "docx として不正: {m}"),
             AppError::MissingPart(p) => write!(f, "必須パートが見つかりません: {p}"),
             AppError::Xml(m) => write!(f, "XML パースエラー: {m}"),
             AppError::InvalidRange(m) => write!(f, "範囲指定が不正: {m}"),
             AppError::SheetNotFound(m) => write!(f, "シートが見つかりません: {m}"),
+            AppError::UnsupportedFormat(m) => write!(f, "未対応の形式: {m}"),
+            AppError::Usage(m) => write!(f, "使い方エラー: {m}"),
         }
     }
 }

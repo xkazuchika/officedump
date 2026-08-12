@@ -70,12 +70,29 @@ $ officedump read report.xlsx --sheet 売上 --range A1:F30
 - `--range` は `A1:F50`（範囲）、`A:C`（列）、`1:30`（行）を指定できます
 - エラーは非ゼロ終了コード + 標準エラーへの JSON で報告します（エージェントが機械処理可能）
 
+### docx の段階的な読み出し
+
+```sh
+$ officedump inspect report.docx
+{
+  "format": "docx",
+  "sections": [{ "type": "body", "blocks": 120 }],
+  "outline": [{ "index": 1, "level": 0, "style": "heading 1", "text": "概要" }]
+}
+
+$ officedump read report.docx --para 1:20
+```
+
+- docx は本文の段落/ラン/表、ヘッダー/フッター、ハイパーリンク、フィールドを構造化します
+- `--para N:M` は本文ブロックの範囲だけを出力します。ヘッダー/フッターは常に保持します
+- docx の画像はインライン/フローティングの配置、ブロック/ランのアンカー、EMU 座標を保持します
+
 ## 対応状況
 
 | 形式 | 状態 |
 |---|---|
 | xlsx | ✅ MVP 対応済み |
-| docx | 未対応（予定） |
+| docx | ✅ MVP 対応済み |
 | pptx | 未対応（予定） |
 | MCP サーバー化 | 未対応（予定） |
 

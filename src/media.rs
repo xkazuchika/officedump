@@ -1,4 +1,4 @@
-//! メディア抽出と drawing アンカーの IR 化。
+//! メディア抽出とアンカーの突合。xlsx drawing のパースも含む。
 
 use std::collections::{HashMap, HashSet};
 
@@ -7,7 +7,8 @@ use quick_xml::events::Event;
 
 use crate::error::AppError;
 use crate::ir::{AnchorPoint, AnchorPos, AnchorSize, MediaAnchor, MediaItem};
-use crate::xlsx::{attr_value, local_name, resolve_target, text_content};
+use crate::package::OfficeFormat;
+use crate::xmlutil::{attr_value, local_name, resolve_target, text_content};
 
 pub struct AnchorDraft {
     pub anchor_type: String,
@@ -26,7 +27,7 @@ struct PointDraft {
     row_off: i64,
 }
 
-/// drawing XML（DrawingML）からアンカー情報を抽出する。
+/// xlsx の drawing XML（DrawingML）からアンカー情報を抽出する。
 /// 座標・サイズの生値を保持し、読み順や意味の解釈は行わない。
 pub fn parse_drawing(xml: &str) -> Result<Vec<AnchorDraft>, AppError> {
     let mut anchors = Vec::new();
@@ -74,19 +75,23 @@ pub fn parse_drawing(xml: &str) -> Result<Vec<AnchorDraft>, AppError> {
                     }
                     b"pos" => {
                         if let Some(a) = cur.as_mut() {
-                            let x =
-                                attr_value(&e, "x").and_then(|s| s.parse().ok()).unwrap_or(0);
-                            let y =
-                                attr_value(&e, "y").and_then(|s| s.parse().ok()).unwrap_or(0);
+                            let x = attr_value(&e, "x")
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0);
+                            let y = attr_value(&e, "y")
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0);
                             a.pos = Some(AnchorPos { x, y });
                         }
                     }
                     b"ext" => {
                         if let Some(a) = cur.as_mut() {
-                            let cx =
-                                attr_value(&e, "cx").and_then(|s| s.parse().ok()).unwrap_or(0);
-                            let cy =
-                                attr_value(&e, "cy").and_then(|s| s.parse().ok()).unwrap_or(0);
+                            let cx = attr_value(&e, "cx")
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0);
+                            let cy = attr_value(&e, "cy")
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0);
                             a.ext = Some(AnchorSize { cx, cy });
                         }
                     }
@@ -120,8 +125,7 @@ pub fn parse_drawing(xml: &str) -> Result<Vec<AnchorDraft>, AppError> {
                 match lname {
                     b"col" | b"colOff" | b"row" | b"rowOff" => cur_field = None,
                     b"from" | b"to" => {
-                        if let (Some(a), Some((is_from, pt))) = (cur.as_mut(), cur_point.take())
-                        {
+                        if let (Some(a), Some((is_from, pt))) = (cur.as_mut(), cur_point.take()) {
                             let p = AnchorPoint {
                                 col: pt.col,
                                 row: pt.row,
@@ -151,49 +155,29 @@ pub fn parse_drawing(xml: &str) -> Result<Vec<AnchorDraft>, AppError> {
     Ok(anchors)
 }
 
-/// 抽出済みメディア一覧と drawing アンカーを突合して MediaItem 一覧を作る。
+/// アンカー付きメディアと抽出済みファイルを突合して MediaItem 一覧を作る。
 /// 整合性ルール:
-/// - アンカーが参照するメディアが zip 内に存在しない → エラー（参照切れを出さない）
-/// - どの drawing からも参照されないメディア → anchor: None の項目として残す（孤立ファイルを作らない）
-pub fn build_media_items(
+/// - アンカーが参照するメディアがパッケージ内に存在しない → エラー（参照切れを出さない）
+/// - どのアンカーからも参照されないメディア → anchor: None の項目として残す（孤立ファイルを作らない）
+pub fn assemble_media_items(
     extracted: &[String],
-    anchors_with_rels: Vec<(String, AnchorDraft, HashMap<String, String>)>,
+    anchored: Vec<(String, MediaAnchor)>,
+    format: OfficeFormat,
 ) -> Result<Vec<MediaItem>, AppError> {
     let extracted_set: HashSet<&str> = extracted.iter().map(|s| s.as_str()).collect();
     let mut items: Vec<MediaItem> = Vec::new();
     let mut referenced: HashSet<String> = HashSet::new();
 
-    for (sheet_name, draft, rels) in anchors_with_rels {
-        let embed_rid = match &draft.embed_rid {
-            Some(r) => r.clone(),
-            None => continue,
-        };
-        let target = rels.get(&embed_rid).ok_or_else(|| {
-            AppError::InvalidXlsx(format!(
-                "drawing のリレーション {embed_rid} が見つかりません"
-            ))
-        })?;
-        let part = resolve_target("xl/drawings", target);
-        let base = part.rsplit('/').next().unwrap_or(&part).to_string();
-        let json_ref = format!("media/{base}");
+    for (json_ref, anchor) in anchored {
         if !extracted_set.contains(json_ref.as_str()) {
-            return Err(AppError::InvalidXlsx(format!(
-                "drawing が参照するメディア {part} がパッケージ内に存在しません"
+            return Err(format.invalid(format!(
+                "drawing が参照するメディア {json_ref} がパッケージ内に存在しません"
             )));
         }
         referenced.insert(json_ref.clone());
         items.push(MediaItem {
             path: json_ref,
-            anchor: Some(MediaAnchor {
-                sheet: sheet_name,
-                anchor_type: draft.anchor_type,
-                placement: "floating".to_string(),
-                name: draft.name,
-                from: draft.from,
-                to: draft.to,
-                pos: draft.pos,
-                ext: draft.ext,
-            }),
+            anchor: Some(anchor),
         });
     }
 
@@ -208,4 +192,45 @@ pub fn build_media_items(
 
     items.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(items)
+}
+
+/// xlsx 用: drawing アンカーをリレーションで解決して MediaItem 一覧を作る。
+pub fn build_media_items(
+    extracted: &[String],
+    anchors_with_rels: Vec<(String, AnchorDraft, HashMap<String, String>)>,
+) -> Result<Vec<MediaItem>, AppError> {
+    let mut anchored: Vec<(String, MediaAnchor)> = Vec::new();
+    for (sheet_name, draft, rels) in anchors_with_rels {
+        let embed_rid = match &draft.embed_rid {
+            Some(r) => r.clone(),
+            None => continue,
+        };
+        let target = rels.get(&embed_rid).ok_or_else(|| {
+            AppError::InvalidXlsx(format!(
+                "drawing のリレーション {embed_rid} が見つかりません"
+            ))
+        })?;
+        let part = resolve_target("xl/drawings", target);
+        let base = part.rsplit('/').next().unwrap_or(&part).to_string();
+        let json_ref = format!("media/{base}");
+        anchored.push((
+            json_ref,
+            MediaAnchor {
+                sheet: Some(sheet_name),
+                from: draft.from,
+                to: draft.to,
+                pos: draft.pos,
+                section: None,
+                block: None,
+                run: None,
+                pos_h: None,
+                pos_v: None,
+                anchor_type: draft.anchor_type,
+                placement: "floating".to_string(),
+                name: draft.name,
+                ext: draft.ext,
+            },
+        ));
+    }
+    assemble_media_items(extracted, anchored, OfficeFormat::Xlsx)
 }
