@@ -1,6 +1,7 @@
 mod docx;
 mod error;
 mod ir;
+mod mcp;
 mod media;
 mod output;
 mod package;
@@ -12,6 +13,7 @@ mod xmlutil;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 
 use error::{AppError, report};
 use ir::{
@@ -19,7 +21,7 @@ use ir::{
     PptxInspectOutput, PptxReadOutput, ReadOutput, ReadSummary, SheetDump, SheetSummary,
     SlideTitle,
 };
-use output::{OutputPaths, emit_read};
+use output::{OutputPaths, render_read};
 use package::{OfficeFormat, OfficePackage};
 use range::RangeFilter;
 
@@ -57,12 +59,14 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// stdio トランスポートの MCP サーバーを起動する
+    Mcp,
 }
 
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Inspect { file } => run_inspect(&file),
+        Command::Inspect { file } => inspect_json(&file).map(|json| println!("{json}")),
         Command::Read {
             file,
             sheet,
@@ -71,7 +75,7 @@ fn main() {
             slide,
             stdout,
             out,
-        } => run_read(
+        } => read_json(
             &file,
             sheet.as_deref(),
             range.as_deref(),
@@ -79,7 +83,9 @@ fn main() {
             slide.as_deref(),
             stdout,
             out.as_deref(),
-        ),
+        )
+        .map(|json| println!("{json}")),
+        Command::Mcp => mcp::run_mcp(),
     };
     if let Err(e) = result {
         report(&e);
@@ -114,15 +120,19 @@ fn rels_path_of(part_path: &str) -> String {
     format!("{}/_rels/{}.rels", dirname(part_path), basename(part_path))
 }
 
-fn run_inspect(file: &Path) -> Result<(), AppError> {
+fn to_json<T: Serialize>(value: &T) -> Result<String, AppError> {
+    serde_json::to_string_pretty(value).map_err(|e| AppError::Output(format!("JSON化に失敗: {e}")))
+}
+
+fn inspect_json(file: &Path) -> Result<String, AppError> {
     match detect_format(file)? {
-        OfficeFormat::Xlsx => run_inspect_xlsx(file),
-        OfficeFormat::Docx => run_inspect_docx(file),
-        OfficeFormat::Pptx => run_inspect_pptx(file),
+        OfficeFormat::Xlsx => inspect_xlsx_json(file),
+        OfficeFormat::Docx => inspect_docx_json(file),
+        OfficeFormat::Pptx => inspect_pptx_json(file),
     }
 }
 
-fn run_read(
+fn read_json(
     file: &Path,
     sheet: Option<&str>,
     range: Option<&str>,
@@ -130,7 +140,7 @@ fn run_read(
     slide: Option<&str>,
     stdout: bool,
     out: Option<&Path>,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     match detect_format(file)? {
         OfficeFormat::Xlsx => {
             if para.is_some() || slide.is_some() {
@@ -138,7 +148,7 @@ fn run_read(
                     "--para は docx 専用、--slide は pptx 専用です".to_string(),
                 ));
             }
-            run_read_xlsx(file, sheet, range, stdout, out)
+            read_xlsx_json(file, sheet, range, stdout, out)
         }
         OfficeFormat::Docx => {
             if sheet.is_some() || range.is_some() || slide.is_some() {
@@ -146,7 +156,7 @@ fn run_read(
                     "--sheet と --range は xlsx 専用、--slide は pptx 専用です".to_string(),
                 ));
             }
-            run_read_docx(file, para, stdout, out)
+            read_docx_json(file, para, stdout, out)
         }
         OfficeFormat::Pptx => {
             if sheet.is_some() || range.is_some() || para.is_some() {
@@ -154,7 +164,7 @@ fn run_read(
                     "--sheet/--range は xlsx 専用、--para は docx 専用です".to_string(),
                 ));
             }
-            run_read_pptx(file, slide, stdout, out)
+            read_pptx_json(file, slide, stdout, out)
         }
     }
 }
@@ -167,7 +177,7 @@ fn open_xlsx(file: &Path) -> Result<(OfficePackage, Vec<xlsx::SheetMeta>), AppEr
     Ok((package, sheets))
 }
 
-fn run_inspect_xlsx(file: &Path) -> Result<(), AppError> {
+fn inspect_xlsx_json(file: &Path) -> Result<String, AppError> {
     let (mut package, sheets) = open_xlsx(file)?;
     let mut summaries = Vec::new();
     for sheet in &sheets {
@@ -181,25 +191,20 @@ fn run_inspect_xlsx(file: &Path) -> Result<(), AppError> {
             cols,
         });
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&InspectOutput {
-            file: file_label(file),
-            format: "xlsx".to_string(),
-            sheets: summaries,
-        })
-        .unwrap()
-    );
-    Ok(())
+    to_json(&InspectOutput {
+        file: file_label(file),
+        format: "xlsx".to_string(),
+        sheets: summaries,
+    })
 }
 
-fn run_read_xlsx(
+fn read_xlsx_json(
     file: &Path,
     sheet_filter: Option<&str>,
     range: Option<&str>,
     stdout: bool,
     out: Option<&Path>,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     let filter = range
         .map(range::parse_range)
         .transpose()?
@@ -262,7 +267,7 @@ fn run_read_xlsx(
         cells: content.sheets.iter().map(|sheet| sheet.cells.len()).sum(),
         media: content.media.len(),
     };
-    emit_read(
+    render_read(
         &paths,
         stdout,
         content.file.clone(),
@@ -272,7 +277,7 @@ fn run_read_xlsx(
     )
 }
 
-fn run_inspect_docx(file: &Path) -> Result<(), AppError> {
+fn inspect_docx_json(file: &Path) -> Result<String, AppError> {
     let mut package = OfficePackage::open(file, OfficeFormat::Docx)?;
     let styles = package
         .read_part_opt("word/styles.xml")?
@@ -281,32 +286,27 @@ fn run_inspect_docx(file: &Path) -> Result<(), AppError> {
         .unwrap_or_default();
     let document = docx::parse_document(&mut package, &styles, None)?;
     let body = &document.sections[0].blocks;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&DocxInspectOutput {
-            file: file_label(file),
-            format: "docx".to_string(),
-            sections: document
-                .sections
-                .iter()
-                .map(|section| DocxSectionSummary {
-                    section_type: section.section_type.clone(),
-                    blocks: section.blocks.len(),
-                })
-                .collect(),
-            outline: docx::collect_outline(body, &styles),
-        })
-        .unwrap()
-    );
-    Ok(())
+    to_json(&DocxInspectOutput {
+        file: file_label(file),
+        format: "docx".to_string(),
+        sections: document
+            .sections
+            .iter()
+            .map(|section| DocxSectionSummary {
+                section_type: section.section_type.clone(),
+                blocks: section.blocks.len(),
+            })
+            .collect(),
+        outline: docx::collect_outline(body, &styles),
+    })
 }
 
-fn run_read_docx(
+fn read_docx_json(
     file: &Path,
     para: Option<&str>,
     stdout: bool,
     out: Option<&Path>,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     let para_range = para.map(range::parse_block_range).transpose()?;
     let mut package = OfficePackage::open(file, OfficeFormat::Docx)?;
     let styles = package
@@ -373,7 +373,7 @@ fn run_read_docx(
             .sum(),
         media: content.media.len(),
     };
-    emit_read(
+    render_read(
         &paths,
         stdout,
         content.file.clone(),
@@ -391,7 +391,7 @@ fn open_pptx(file: &Path) -> Result<(OfficePackage, Vec<pptx::SlideMeta>), AppEr
     Ok((package, slides))
 }
 
-fn run_inspect_pptx(file: &Path) -> Result<(), AppError> {
+fn inspect_pptx_json(file: &Path) -> Result<String, AppError> {
     let (mut package, slides) = open_pptx(file)?;
     let mut titles = Vec::new();
     for meta in &slides {
@@ -403,25 +403,20 @@ fn run_inspect_pptx(file: &Path) -> Result<(), AppError> {
             });
         }
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&PptxInspectOutput {
-            file: file_label(file),
-            format: "pptx".to_string(),
-            slides: slides.len(),
-            titles,
-        })
-        .unwrap()
-    );
-    Ok(())
+    to_json(&PptxInspectOutput {
+        file: file_label(file),
+        format: "pptx".to_string(),
+        slides: slides.len(),
+        titles,
+    })
 }
 
-fn run_read_pptx(
+fn read_pptx_json(
     file: &Path,
     slide: Option<&str>,
     stdout: bool,
     out: Option<&Path>,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     let range = slide.map(range::parse_block_range).transpose()?;
     let (mut package, slides) = open_pptx(file)?;
     let paths = OutputPaths::resolve(file, out)?;
@@ -486,7 +481,7 @@ fn run_read_pptx(
         shapes: content.slides.iter().map(|slide| slide.shapes.len()).sum(),
         media: content.media.len(),
     };
-    emit_read(
+    render_read(
         &paths,
         stdout,
         content.file.clone(),

@@ -61,21 +61,17 @@ pub fn write_content<T: Serialize>(path: &Path, value: &T) -> Result<(), AppErro
     Ok(())
 }
 
-pub fn emit_read<T: Serialize>(
+pub fn render_read<T: Serialize>(
     paths: &OutputPaths,
     stdout: bool,
     file: String,
     format: String,
     summary: ReadSummary,
     content: &T,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     if stdout {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(content)
-                .map_err(|error| AppError::Output(format!("標準出力JSON化に失敗: {error}")))?
-        );
-        return Ok(());
+        return serde_json::to_string_pretty(content)
+            .map_err(|error| AppError::Output(format!("標準出力JSON化に失敗: {error}")));
     }
 
     write_content(paths.content(), content)?;
@@ -86,10 +82,6 @@ pub fn emit_read<T: Serialize>(
         media_dir: paths.media_dir().display().to_string(),
         summary,
     };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&manifest)
-            .map_err(|error| AppError::Output(format!("manifestのJSON化に失敗: {error}")))?
-    );
-    Ok(())
+    serde_json::to_string_pretty(&manifest)
+        .map_err(|error| AppError::Output(format!("manifestのJSON化に失敗: {error}")))
 }

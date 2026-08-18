@@ -206,7 +206,7 @@ fn read_preserves_runs_tables_headers_links_fields_and_unknown_elements() {
         body.as_array()
             .unwrap()
             .iter()
-            .all(|block| block.to_string().contains("ヘッダー本文") == false)
+            .all(|block| !block.to_string().contains("ヘッダー本文"))
     );
 
     let unknown = json["unhandledElements"]

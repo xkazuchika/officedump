@@ -97,6 +97,30 @@ $ officedump read deck.pptx --slide 1:5
 - 図形ツリー順は `zOrder`、位置とサイズは `geometry` の EMU 生値（`x` / `y` / `cx` / `cy`）で保持します
 - `--slide N:M` で対象スライドを絞れます。読み順やスライド内容の意味づけは行いません
 
+### MCP サーバー — シェルなしでエージェントから直接利用
+
+```sh
+officedump mcp
+```
+
+- stdio トランスポートの MCP サーバーを起動し、`inspect` / `read` を MCP ツールとして公開します
+- ツール引数は CLI オプションに対応します（`sheet` / `range` / `para` / `slide` / `out` / `stdout`）
+- `read` は CLI と同じ契約で動きます。既定では content.json / media/ を書き出して manifest を返し、`stdout: true` のときだけ分解 JSON 全量をツール結果として返します
+- エラーは CLI と同じ `kind` / `message` を含む JSON をツール実行エラーとして返します（サーバーは継続します）
+
+MCP クライアントの設定例:
+
+```json
+{
+  "mcpServers": {
+    "officedump": {
+      "command": "officedump",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 ## LLM エージェント連携
 
 Office ファイルを扱うエージェントは、まず `inspect` で構造を確認してから、範囲を絞った `read` を実行してください。`read` のstdout manifestから content.json のパスを受け取り、必要な情報だけを読めます。
@@ -110,7 +134,7 @@ Office ファイルを扱うエージェントは、まず `inspect` で構造�
 | xlsx | ✅ MVP 対応済み |
 | docx | ✅ MVP 対応済み |
 | pptx | ✅ MVP 対応済み |
-| MCP サーバー化 | 未対応（予定） |
+| MCP サーバー化 | ✅ 対応済み（`officedump mcp`、stdio） |
 
 旧バイナリ形式（.xls / .doc / .ppt）は対象外です。
 

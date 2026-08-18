@@ -142,6 +142,30 @@ officedump read small.xlsx --stdout
 - `sheet_not_found`: シート名を `inspect` の結果で確認する
 - `output_error` / `io_error`: 出力先の権限・パス・容量を確認する
 
+## MCP サーバー
+
+シェル実行なしでエージェントから利用する場合は、`officedump mcp` が stdio トランスポートの MCP サーバーを起動します。CLI と同じ `inspect` / `read` の2ツールを公開し、コマンド契約・形式別の範囲指定・エラー契約も CLI と同一です。
+
+クライアント設定の例:
+
+```json
+{
+  "mcpServers": {
+    "officedump": {
+      "command": "officedump",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+ツールと引数:
+
+- `inspect`: `file`（必須）。構造概要 JSON をテキストで返します
+- `read`: `file`（必須）、`sheet` / `range` / `para` / `slide` / `out` / `stdout`（任意）。既定では manifest JSON をテキストで返し、`stdout: true` のときだけ分解 JSON 全量を返します
+
+ツール実行の失敗は MCP のツール実行エラー（`isError: true`）として報告され、本文は CLI と同じ `kind` / `message` を持つ JSON です。エラー後もサーバーは後続のツール呼び出しを受け付けます。
+
 ## Skill 作成時の方針
 
 Skillはこの資料の利用手順を要約し、対象エージェントが実行できるコマンド形式に合わせます。最低限、次を含めてください。
