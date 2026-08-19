@@ -1,16 +1,4 @@
-# xlsx-decomposition Specification
-
-## Purpose
-xlsx ワークブックを、構造を正規化しつつ属性を欠落なく保持した JSON 中間表現（IR）へ分解する能力。後段の LLM が意味づけ・整形（Markdown 化等）を行うための、情報損失のない入力を提供することを目的とする。
-## Requirements
-### Requirement: ワークブック構造の概要取得
-
-ツールは xlsx ファイルを読み、シート名と各シートの寸法（行数・列数）を含む構造概要を JSON で返さなければならない（SHALL）。この概要にはセルデータ本体を含めてはならない（MUST NOT）。
-
-#### Scenario: 複数シートの概要取得
-
-- **WHEN** 3つのシート（売上: 1200行×8列、経費: 340行×5列、空シート）を持つ xlsx の構造概要を要求する
-- **THEN** 各シートの名前・行数・列数が JSON で返され、セルデータは含まれない
+## MODIFIED Requirements
 
 ### Requirement: セルデータの忠実な分解
 
@@ -46,37 +34,7 @@ xlsx ワークブックを、構造を正規化しつつ属性を欠落なく保
 - **WHEN** インライン文字列セル（`t="inlineStr"`）の `<is>` 要素がリッチテキストランを持つ xlsx を分解する
 - **THEN** 出力 JSON の当該セルに、連結テキストと共にランごとの書式とテキストを含む構造化データが含まれる
 
-### Requirement: 結合セルの保持
-
-ツールは結合セルの範囲を、開始・終了セルを特定できる形式で JSON に保持しなければならない（SHALL）。
-
-#### Scenario: 結合セルを含むシートの分解
-
-- **WHEN** セル範囲 A1:C1 が結合されたシートを含む xlsx を分解する
-- **THEN** 出力 JSON に結合範囲 A1:C1 を示す情報が含まれる
-
-### Requirement: 範囲指定による部分読み出し
-
-ツールはシートとセル範囲を指定して、その部分だけを JSON として返せなければならない（SHALL）。指定範囲外のセルデータを出力に含めてはならない（MUST NOT）。
-
-#### Scenario: 巨大シートの部分読み出し
-
-- **WHEN** 1200行あるシートに対し 1〜30行目の範囲を指定して読み出す
-- **THEN** 指定範囲内のセルのみが返され、31行目以降のデータは含まれない
-
-### Requirement: 機械可読な出力とエラー報告
-
-ツールは `read` を `--stdout` なしで実行した場合、分解結果を出力ルートの `content.json` に JSON として書き出し、標準出力には content と media ディレクトリのパスおよび sheets/cells/media 件数を持つ manifest JSON を書き出さなければならない（SHALL）。ツールは `--stdout` が指定された場合、分解結果 JSON 全量を標準出力に書き出さなければならない（SHALL）。失敗時は非ゼロの終了コードで終了し、エラー種別とメッセージを含む JSON を標準エラーに出力しなければならない（SHALL）。
-
-#### Scenario: 破損ファイルの処理
-
-- **WHEN** 破損した（zip として開けない）xlsx ファイルを指定して分解を試みる
-- **THEN** 非ゼロの終了コードで終了し、エラー種別とメッセージを含む JSON が標準エラーに出力される
-
-#### Scenario: xlsx のファイル中心出力
-
-- **WHEN** xlsx を `--stdout` なしで読み出す
-- **THEN** 分解 JSON は `content.json` に書き出され、標準出力には sheets/cells/media 件数を含む manifest JSON のみが出力される
+## ADDED Requirements
 
 ### Requirement: 行属性の保持
 
@@ -129,4 +87,3 @@ xlsx ワークブックを、構造を正規化しつつ属性を欠落なく保
 
 - **WHEN** `formatCode` 属性のみを持ち `formatCode16` 属性を持たない `<numFmt>` を含む xlsx を分解する
 - **THEN** 出力 JSON の当該書式の `formatCode` に従来どおり `formatCode` の値が保持される
-

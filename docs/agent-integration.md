@@ -80,6 +80,18 @@ officedump read report.xlsx --sheet "売上" --range A1:F30
 - `A:C`: 列範囲
 - `1:30`: 行範囲
 
+#### xlsx の IR 構造
+
+`read` の `content.json` は次の構造を持ちます。
+
+- `sheets[]`: 各シートの `name` / `dimension` / `mergedCells` / `cells` / `unhandledElements` / `rows`
+  - `cells[]`: 各セルの `ref` / `type` / `value` / `formula` / `formulaMeta` / `style` / `runs`
+    - `formulaMeta`: 数式の属性（`t`: normal/array/shared/dataTable、`ref`: 対象範囲、`si`: 共有数式グループインデックス、`aca`/`bx`/`ca`）
+    - `style`: `xf`（cellXfs インデックス）/ `numFmtId` / `formatCode`
+    - `runs`: リッチテキストラン（`text` と `rpr`）。`t="s"`（共有文字列）・`t="inlineStr"`（インライン文字列）のセルで、リッチテキストランが存在する場合に含まれる
+  - `rows[]`: 属性を持つ行のみ（`r` / `hidden` / `ht` / `customHeight` / `outlineLevel` / `collapsed` / `spans` / `s` / `customFormat` / `thickTop` / `thickBottom`）。デフォルト値の行は省略される
+- `styles`: ワークブックのスタイル定義（`numFmts` / `fonts` / `fills` / `borders` / `cellStyleXfs` / `cellXfs` / `cellStyles`）。`fonts`/`fills`/`borders` は生 XML、`cellXfs`/`cellStyleXfs` は構造化された `xf`（全属性 + `alignment`/`protection` 子要素）。`formatCode16`（MS-XLSX 拡張）が存在する場合は `formatCode` より優先される
+
 ### docx
 
 `inspect` の見出しアウトラインを見てから、本文ブロック範囲を `--para` で指定します。

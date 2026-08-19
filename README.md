@@ -131,7 +131,7 @@ Office ファイルを扱うエージェントは、まず `inspect` で構造�
 
 | 形式 | 状態 |
 |---|---|
-| xlsx | ✅ MVP 対応済み |
+| xlsx | ✅ MVP 対応済み（リッチテキストラン・数式メタデータ・行属性・スタイル定義保持） |
 | docx | ✅ MVP 対応済み |
 | pptx | ✅ MVP 対応済み |
 | MCP サーバー化 | ✅ 対応済み（`officedump mcp`、stdio） |

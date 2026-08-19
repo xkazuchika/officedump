@@ -31,6 +31,8 @@ pub struct ReadOutput {
     pub format: String,
     pub sheets: Vec<SheetDump>,
     pub media: Vec<MediaItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub styles: Option<WorkbookStyles>,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +45,8 @@ pub struct SheetDump {
     pub cells: Vec<Cell>,
     #[serde(rename = "unhandledElements")]
     pub unhandled: Vec<RawElement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<Vec<RowInfo>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,8 +58,12 @@ pub struct Cell {
     pub value: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
+    #[serde(rename = "formulaMeta", skip_serializing_if = "Option::is_none")]
+    pub formula_meta: Option<FormulaMeta>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub style: Option<CellStyle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runs: Option<Vec<XlsxRichRun>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,6 +73,196 @@ pub struct CellStyle {
     pub num_fmt_id: u32,
     #[serde(rename = "formatCode", skip_serializing_if = "Option::is_none")]
     pub format_code: Option<String>,
+}
+
+/// 数式のメタデータ。数式テキストは Cell.formula に保持し、ここには属性のみ保持する。
+#[derive(Debug, Serialize)]
+pub struct FormulaMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub t: Option<String>,
+    #[serde(rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub r#ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub si: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aca: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bx: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ca: Option<bool>,
+}
+
+/// リッチテキストラン。共有文字列・インライン文字列の <r> に対応する。
+#[derive(Debug, Clone, Serialize)]
+pub struct XlsxRichRun {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpr: Option<XlsxRunProps>,
+}
+
+/// ラン書式プロパティ（<rPr>）。生値を保持し、解決は行わない。
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct XlsxRunProps {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub b: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub i: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub u: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strike: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sz: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rfont: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub charset: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
+    #[serde(rename = "vertAlign", skip_serializing_if = "Option::is_none")]
+    pub vert_align: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condense: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extend: Option<bool>,
+}
+
+/// 行の構造属性。存在する属性のみ保持する。
+#[derive(Debug, Serialize)]
+pub struct RowInfo {
+    pub r: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spans: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s: Option<u32>,
+    #[serde(rename = "customFormat", skip_serializing_if = "Option::is_none")]
+    pub custom_format: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ht: Option<f64>,
+    #[serde(rename = "customHeight", skip_serializing_if = "Option::is_none")]
+    pub custom_height: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    #[serde(rename = "outlineLevel", skip_serializing_if = "Option::is_none")]
+    pub outline_level: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
+    #[serde(rename = "thickTop", skip_serializing_if = "Option::is_none")]
+    pub thick_top: Option<bool>,
+    #[serde(rename = "thickBottom", skip_serializing_if = "Option::is_none")]
+    pub thick_bottom: Option<bool>,
+}
+
+/// ワークブックのスタイル定義。生値を保持し、解決・適用は行わない。
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct WorkbookStyles {
+    #[serde(rename = "numFmts")]
+    pub num_fmts: Vec<NumFmtDef>,
+    pub fonts: Vec<RawElement>,
+    pub fills: Vec<RawElement>,
+    pub borders: Vec<RawElement>,
+    #[serde(rename = "cellStyleXfs")]
+    pub cell_style_xfs: Vec<XfDef>,
+    #[serde(rename = "cellXfs")]
+    pub cell_xfs: Vec<XfDef>,
+    #[serde(rename = "cellStyles")]
+    pub cell_styles: Vec<CellStyleDef>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NumFmtDef {
+    #[serde(rename = "numFmtId")]
+    pub id: u32,
+    #[serde(rename = "formatCode")]
+    pub code: String,
+}
+
+/// xf 要素の定義。全属性と alignment/protection 子要素を保持する。
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct XfDef {
+    #[serde(rename = "numFmtId", skip_serializing_if = "Option::is_none")]
+    pub num_fmt_id: Option<u32>,
+    #[serde(rename = "fontId", skip_serializing_if = "Option::is_none")]
+    pub font_id: Option<u32>,
+    #[serde(rename = "fillId", skip_serializing_if = "Option::is_none")]
+    pub fill_id: Option<u32>,
+    #[serde(rename = "borderId", skip_serializing_if = "Option::is_none")]
+    pub border_id: Option<u32>,
+    #[serde(rename = "xfId", skip_serializing_if = "Option::is_none")]
+    pub xf_id: Option<u32>,
+    #[serde(rename = "applyNumberFormat", skip_serializing_if = "Option::is_none")]
+    pub apply_number_format: Option<bool>,
+    #[serde(rename = "applyFont", skip_serializing_if = "Option::is_none")]
+    pub apply_font: Option<bool>,
+    #[serde(rename = "applyFill", skip_serializing_if = "Option::is_none")]
+    pub apply_fill: Option<bool>,
+    #[serde(rename = "applyBorder", skip_serializing_if = "Option::is_none")]
+    pub apply_border: Option<bool>,
+    #[serde(rename = "applyAlignment", skip_serializing_if = "Option::is_none")]
+    pub apply_alignment: Option<bool>,
+    #[serde(rename = "applyProtection", skip_serializing_if = "Option::is_none")]
+    pub apply_protection: Option<bool>,
+    #[serde(rename = "quotePrefix", skip_serializing_if = "Option::is_none")]
+    pub quote_prefix: Option<bool>,
+    #[serde(rename = "pivotButton", skip_serializing_if = "Option::is_none")]
+    pub pivot_button: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<AlignmentDef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protection: Option<ProtectionDef>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlignmentDef {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical: Option<String>,
+    #[serde(rename = "wrapText", skip_serializing_if = "Option::is_none")]
+    pub wrap_text: Option<bool>,
+    #[serde(rename = "textRotation", skip_serializing_if = "Option::is_none")]
+    pub text_rotation: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent: Option<u32>,
+    #[serde(rename = "relativeIndent", skip_serializing_if = "Option::is_none")]
+    pub relative_indent: Option<i32>,
+    #[serde(rename = "shrinkToFit", skip_serializing_if = "Option::is_none")]
+    pub shrink_to_fit: Option<bool>,
+    #[serde(rename = "justifyLastLine", skip_serializing_if = "Option::is_none")]
+    pub justify_last_line: Option<bool>,
+    #[serde(rename = "readingOrder", skip_serializing_if = "Option::is_none")]
+    pub reading_order: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtectionDef {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct CellStyleDef {
+    pub name: String,
+    #[serde(rename = "xfId")]
+    pub xf_id: u32,
+    #[serde(rename = "builtinId", skip_serializing_if = "Option::is_none")]
+    pub builtin_id: Option<u32>,
+    #[serde(rename = "customBuiltin", skip_serializing_if = "Option::is_none")]
+    pub custom_builtin: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    #[serde(rename = "customLocked", skip_serializing_if = "Option::is_none")]
+    pub custom_locked: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +497,7 @@ pub struct TableCell {
 // ---------------------------------------------------------------------------
 
 /// 未知要素の生 XML 保持（escape hatch）
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RawElement {
     pub name: String,
     pub xml: String,

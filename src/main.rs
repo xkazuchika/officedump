@@ -221,9 +221,10 @@ fn read_xlsx_json(
         .map(|xml| xlsx::parse_shared_strings(&xml))
         .transpose()?
         .unwrap_or_default();
-    let styles = package
-        .read_part_opt("xl/styles.xml")?
-        .map(|xml| xlsx::parse_styles(&xml))
+    let styles_xml = package.read_part_opt("xl/styles.xml")?;
+    let styles = styles_xml
+        .as_ref()
+        .map(|xml| xlsx::parse_styles(xml))
         .transpose()?
         .unwrap_or_default();
     let paths = OutputPaths::resolve(file, out)?;
@@ -254,6 +255,11 @@ fn read_xlsx_json(
             merged_cells: parsed.merged,
             cells: parsed.cells,
             unhandled: parsed.unhandled,
+            rows: if parsed.rows.is_empty() {
+                None
+            } else {
+                Some(parsed.rows)
+            },
         });
     }
     let content = ReadOutput {
@@ -261,6 +267,7 @@ fn read_xlsx_json(
         format: "xlsx".to_string(),
         sheets: dumps,
         media: media::build_media_items(&extracted, anchors)?,
+        styles: styles_xml.is_some().then(|| styles.clone()),
     };
     let summary = ReadSummary::Xlsx {
         sheets: content.sheets.len(),
