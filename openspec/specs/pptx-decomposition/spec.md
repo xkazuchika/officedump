@@ -65,12 +65,17 @@ pptx プレゼンテーションを、スライド内の図形・テキスト・
 
 ### Requirement: 表図形の忠実な分解
 
-ツールは表を持つ graphicFrame 図形について、列幅・行・セルを保持しなければならない（SHALL）。各行の高さ（`h`）が存在する場合は保持しなければならない（SHALL）。各セルのテキスト段落とランを保持しなければならない（SHALL）。セル結合として、`gridSpan`・`rowSpan`・`hMerge`・`vMerge` が存在する場合は保持しなければならない（SHALL）。
+ツールは表を持つ graphicFrame 図形について、列幅・行・セルを保持しなければならない（SHALL）。各行の高さ（`h`）が存在する場合は保持しなければならない（SHALL）。各セルのテキスト段落とランを保持しなければならない（SHALL）。セル結合として、`gridSpan`・`rowSpan`・`hMerge`・`vMerge` が存在する場合は保持しなければならない（SHALL）。`graphicFrame` の `graphicData/@uri` を見て、表 (`.../table`) 以外（チャート等）を `type: "table"` と誤判定してはならない（MUST NOT）。
 
 #### Scenario: 表を含むスライドの分解
 
 - **WHEN** 2列2行の表を含むスライドを分解する
 - **THEN** 当該図形に列幅、2行のセル構造、および各セルのテキストが含まれる
+
+#### Scenario: チャート graphicFrame の分解
+
+- **WHEN** 表ではなくチャートを含む `graphicFrame` を持つスライドを分解する
+- **THEN** 当該図形の `type` は "chart" または "graphicFrame" であり、誤って `table` にならない
 
 #### Scenario: セル結合を持つ表の分解
 

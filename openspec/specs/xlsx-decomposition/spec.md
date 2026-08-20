@@ -48,12 +48,17 @@ xlsx ワークブックを、構造を正規化しつつ属性を欠落なく保
 
 ### Requirement: 結合セルの保持
 
-ツールは結合セルの範囲を、開始・終了セルを特定できる形式で JSON に保持しなければならない（SHALL）。
+ツールは結合セルの範囲を、開始・終了セルを特定できる形式で JSON に保持しなければならない（SHALL）。`mergeCell` 要素は空要素形式（`<mergeCell .../>`）のみならず、Start/End 形式（`<mergeCell ...></mergeCell>`）でも読み取らなければならない（SHALL）。
 
 #### Scenario: 結合セルを含むシートの分解
 
 - **WHEN** セル範囲 A1:C1 が結合されたシートを含む xlsx を分解する
 - **THEN** 出力 JSON に結合範囲 A1:C1 を示す情報が含まれる
+
+#### Scenario: Start/End 形式の結合セルの分解
+
+- **WHEN** `<mergeCell ref="A1:C1"></mergeCell>` 形式で結合セルが定義された xlsx を分解する
+- **THEN** 出力 JSON に結合範囲 A1:C1 が含まれる
 
 ### Requirement: 範囲指定による部分読み出し
 
@@ -63,6 +68,20 @@ xlsx ワークブックを、構造を正規化しつつ属性を欠落なく保
 
 - **WHEN** 1200行あるシートに対し 1〜30行目の範囲を指定して読み出す
 - **THEN** 指定範囲内のセルのみが返され、31行目以降のデータは含まれない
+
+#### Scenario: 逆転した範囲の正規化
+
+- **WHEN** 範囲 `B1:A1` を指定して読み出す
+- **THEN** A1 と B1 のセルが返され、空結果にならない
+
+### Requirement: 画像を含まない drawing の処理
+
+ツールは、画像等のメディアを含まない drawing（`drawing.xml.rels` が存在しない）があっても、読み出しを継続しなければならない（SHALL）。そのような drawing に対して `.rels` ファイルが必須である旨のエラーを返してはならない（MUST NOT）。
+
+#### Scenario: 画像なし drawing の分解
+
+- **WHEN** `<drawing>` 要素を持つが `drawing.xml.rels` を持たない xlsx を分解する
+- **THEN** エラーなく読み出され、`media` は空として返される
 
 ### Requirement: 機械可読な出力とエラー報告
 
