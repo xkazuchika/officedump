@@ -24,6 +24,7 @@ use ir::{
 use output::{OutputPaths, render_read};
 use package::{OfficeFormat, OfficePackage};
 use range::RangeFilter;
+use xmlutil::{dirname, parse_rels, rels_path_of, resolve_target};
 
 /// Office ファイルを解釈せず忠実に JSON へ分解する CLI
 #[derive(Parser)]
@@ -108,18 +109,6 @@ fn file_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-fn dirname(path: &str) -> &str {
-    path.rfind('/').map(|i| &path[..i]).unwrap_or("")
-}
-
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
-fn rels_path_of(part_path: &str) -> String {
-    format!("{}/_rels/{}.rels", dirname(part_path), basename(part_path))
-}
-
 fn to_json<T: Serialize>(value: &T) -> Result<String, AppError> {
     serde_json::to_string_pretty(value).map_err(|e| AppError::Output(format!("JSON化に失敗: {e}")))
 }
@@ -172,7 +161,7 @@ fn read_json(
 fn open_xlsx(file: &Path) -> Result<(OfficePackage, Vec<xlsx::SheetMeta>), AppError> {
     let mut package = OfficePackage::open(file, OfficeFormat::Xlsx)?;
     let workbook = package.read_part("xl/workbook.xml")?;
-    let rels = xmlutil::parse_rels(&package.read_part("xl/_rels/workbook.xml.rels")?)?;
+    let rels = parse_rels(&package.read_part("xl/_rels/workbook.xml.rels")?)?;
     let sheets = xlsx::parse_workbook(&workbook, &rels)?;
     Ok((package, sheets))
 }
@@ -238,12 +227,15 @@ fn read_xlsx_json(
         if let Some(drawing_rid) = &parsed.drawing_rid
             && let Some(sheet_rels_xml) = package.read_part_opt(&rels_path_of(&sheet.path))?
         {
-            let sheet_rels = xmlutil::parse_rels(&sheet_rels_xml)?;
+            let sheet_rels = parse_rels(&sheet_rels_xml)?;
             if let Some(target) = sheet_rels.get(drawing_rid) {
-                let drawing_path = xmlutil::resolve_target(dirname(&sheet.path), target);
+                let drawing_path = resolve_target(dirname(&sheet.path), target);
                 let drawing_xml = package.read_part(&drawing_path)?;
-                let drawing_rels =
-                    xmlutil::parse_rels(&package.read_part(&rels_path_of(&drawing_path))?)?;
+                let drawing_rels = package
+                    .read_part_opt(&rels_path_of(&drawing_path))?
+                    .map(|xml| parse_rels(&xml))
+                    .transpose()?
+                    .unwrap_or_default();
                 for draft in media::parse_drawing(&drawing_xml)? {
                     anchors.push((sheet.name.clone(), draft, drawing_rels.clone()));
                 }
@@ -324,19 +316,14 @@ fn read_docx_json(
     let paths = OutputPaths::resolve(file, out)?;
     let extracted = package.extract_media(paths.root())?;
     let document = docx::parse_document(&mut package, &styles, para_range)?;
-    let rels = xmlutil::parse_rels(&package.read_part("word/_rels/document.xml.rels")?)?;
     let mut anchored = Vec::new();
     for drawing in document.drawings {
-        let Some(rid) = drawing.info.embed_rid else {
+        let Some(target) = drawing.info.target else {
             continue;
         };
-        let Some(target) = rels.get(&rid) else {
-            return Err(AppError::InvalidDocx(format!(
-                "drawing のリレーション {rid} が見つかりません"
-            )));
-        };
-        let part = xmlutil::resolve_target("word", target);
-        let json_ref = format!("media/{}", basename(&part));
+        let json_ref = OfficeFormat::Docx.media_ref(&target).ok_or_else(|| {
+            AppError::InvalidDocx(format!("メディアパスが不正です: {target}"))
+        })?;
         let placement = if drawing.info.kind == "inline" {
             "inline"
         } else {
@@ -393,7 +380,7 @@ fn read_docx_json(
 fn open_pptx(file: &Path) -> Result<(OfficePackage, Vec<pptx::SlideMeta>), AppError> {
     let mut package = OfficePackage::open(file, OfficeFormat::Pptx)?;
     let presentation = package.read_part("ppt/presentation.xml")?;
-    let rels = xmlutil::parse_rels(&package.read_part("ppt/_rels/presentation.xml.rels")?)?;
+    let rels = parse_rels(&package.read_part("ppt/_rels/presentation.xml.rels")?)?;
     let slides = pptx::parse_presentation(&presentation, &rels)?;
     Ok((package, slides))
 }
@@ -440,7 +427,7 @@ fn read_pptx_json(
         let parsed = pptx::parse_slide(&package.read_part(&meta.path)?, meta.index)?;
         let rels = package
             .read_part_opt(&rels_path_of(&meta.path))?
-            .map(|xml| xmlutil::parse_rels(&xml))
+            .map(|xml| parse_rels(&xml))
             .transpose()?
             .unwrap_or_default();
         for media in parsed.media {
@@ -450,8 +437,10 @@ fn read_pptx_json(
                     meta.index, media.embed_rid
                 ))
             })?;
-            let part = xmlutil::resolve_target(dirname(&meta.path), target);
-            let json_ref = format!("media/{}", basename(&part));
+            let part = resolve_target(dirname(&meta.path), target);
+            let json_ref = OfficeFormat::Pptx.media_ref(&part).ok_or_else(|| {
+                AppError::InvalidPptx(format!("メディアパスが不正です: {part}"))
+            })?;
             anchored.push((
                 json_ref,
                 MediaAnchor {

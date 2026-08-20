@@ -211,8 +211,9 @@ pub fn build_media_items(
             ))
         })?;
         let part = resolve_target("xl/drawings", target);
-        let base = part.rsplit('/').next().unwrap_or(&part).to_string();
-        let json_ref = format!("media/{base}");
+        let json_ref = OfficeFormat::Xlsx.media_ref(&part).ok_or_else(|| {
+            AppError::InvalidXlsx(format!("メディアパスが不正です: {part}"))
+        })?;
         anchored.push((
             json_ref,
             MediaAnchor {

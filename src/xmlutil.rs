@@ -55,6 +55,18 @@ pub(crate) fn resolve_target(base_dir: &str, target: &str) -> String {
     parts.join("/")
 }
 
+pub(crate) fn dirname(path: &str) -> &str {
+    path.rfind('/').map(|i| &path[..i]).unwrap_or("")
+}
+
+pub(crate) fn basename(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+pub(crate) fn rels_path_of(part_path: &str) -> String {
+    format!("{}/_rels/{}.rels", dirname(part_path), basename(part_path))
+}
+
 /// `.rels` を Id -> Target の対応表にする。
 pub(crate) fn parse_rels(xml: &str) -> Result<HashMap<String, String>, AppError> {
     let mut map = HashMap::new();

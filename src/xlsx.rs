@@ -661,6 +661,10 @@ pub fn parse_worksheet(
                     }
                 } else if lname == b"c" && draft.is_none() {
                     draft = Some(build_draft(&e, &mut cur_row, &mut last_col_in_row));
+                } else if lname == b"mergeCell" && depth == 2 {
+                    if let Some(r) = attr_value(&e, "ref") {
+                        result.merged.push(r);
+                    }
                 } else if draft.is_some() {
                     match lname {
                         b"f" => {

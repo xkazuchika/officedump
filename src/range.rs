@@ -100,8 +100,18 @@ fn half(p: &str) -> Result<(Option<u32>, Option<u32>), AppError> {
 /// "A1:F50" / "A:C" / "1:30" / "B2" をパースする。
 pub fn parse_range(s: &str) -> Result<RangeFilter, AppError> {
     if let Some((a, b)) = s.split_once(':') {
-        let (a_col, a_row) = half(a)?;
-        let (b_col, b_row) = half(b)?;
+        let (mut a_col, mut a_row) = half(a)?;
+        let (mut b_col, mut b_row) = half(b)?;
+        if let (Some(ac), Some(bc)) = (a_col, b_col)
+            && ac > bc
+        {
+            std::mem::swap(&mut a_col, &mut b_col);
+        }
+        if let (Some(ar), Some(br)) = (a_row, b_row)
+            && ar > br
+        {
+            std::mem::swap(&mut a_row, &mut b_row);
+        }
         Ok(RangeFilter {
             min_col: a_col,
             max_col: b_col,

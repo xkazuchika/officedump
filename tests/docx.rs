@@ -466,3 +466,200 @@ fn read_field_attributes() {
     assert_eq!(field["dirty"], true);
     assert_eq!(field["fldLock"], true);
 }
+
+// ---------------------------------------------------------------------------
+// レビュー指摘に対する回帰テスト
+// ---------------------------------------------------------------------------
+
+fn body_drawing(rid: &str) -> String {
+    format!(
+        r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="1000000" cy="1000000"/><wp:docPr id="1" name="body画像"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip r:embed="{rid}" xmlns:r="{R_NS}"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#
+    )
+}
+
+fn header_image_parts() -> Vec<(String, Vec<u8>)> {
+    let header_drawing = format!(
+        r#"<w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="1000000" cy="1000000"/><wp:docPr id="2" name="header画像"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:blipFill><a:blip r:embed="rIdHeaderImg" xmlns:r="{R_NS}"/></pic:blipFill></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#
+    );
+    let document = format!(
+        r#"<w:document xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:body>
+<w:p><w:r><w:t>本文段落</w:t></w:r><w:r>{}</w:r></w:p>
+<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader"/></w:sectPr>
+</w:body></w:document>"#,
+        body_drawing("rIdBodyImg")
+    );
+    let header = format!(
+        r#"<w:hdr xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:p><w:r>{}</w:r></w:p></w:hdr>"#,
+        header_drawing
+    );
+    let document_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rIdHeader" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>
+<Relationship Id="rIdBodyImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/body.png"/>
+</Relationships>"#
+        .to_string();
+    let header_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rIdHeaderImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/header.png"/>
+</Relationships>"#
+        .to_string();
+    let mut parts = strings(vec![
+        ("word/document.xml", document),
+        ("word/_rels/document.xml.rels", document_rels),
+        ("word/header1.xml", header),
+        ("word/_rels/header1.xml.rels", header_rels),
+    ]);
+    parts.push(("word/media/body.png".to_string(), FAKE_PNG.to_vec()));
+    parts.push(("word/media/header.png".to_string(), FAKE_PNG.to_vec()));
+    parts
+}
+
+/// Scenario: ヘッダー内の画像は header1.xml.rels で解決する
+#[test]
+fn read_header_image_uses_own_rels() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "header.docx", header_image_parts());
+    let out = dir.path().join("out");
+    let json = stdout_json(&officedump(
+        &[
+            "read",
+            file.to_str().unwrap(),
+            "--out",
+            out.to_str().unwrap(),
+        ],
+        dir.path(),
+    ));
+
+    let media = json["media"].as_array().unwrap();
+    assert_eq!(media.len(), 2);
+
+    let header = media
+        .iter()
+        .find(|m| m["ref"] == "media/header.png")
+        .expect("header.png の項目がありません");
+    assert_eq!(header["anchor"]["section"], "header-default");
+
+    let body = media
+        .iter()
+        .find(|m| m["ref"] == "media/body.png")
+        .expect("body.png の項目がありません");
+    assert_eq!(body["anchor"]["section"], "body");
+
+    assert!(out.join("media/header.png").exists());
+    assert!(out.join("media/body.png").exists());
+}
+
+fn malicious_media_parts() -> Vec<(String, Vec<u8>)> {
+    let document = format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body><w:p><w:r><w:t>本文</w:t></w:r></w:p></w:body></w:document>"#
+    );
+    let mut parts = strings(vec![
+        ("word/document.xml", document),
+        (
+            "word/_rels/document.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#.to_string(),
+        ),
+    ]);
+    // メディアディレクトリの親に脱出しようとするエントリ
+    parts.push(("word/media/..".to_string(), FAKE_PNG.to_vec()));
+    parts
+}
+
+/// Scenario: メディアパスに `..` が含まれる場合はエラーにする
+#[test]
+fn rejects_malicious_media_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "evil.docx", malicious_media_parts());
+    let out = officedump(&["read", file.to_str().unwrap()], dir.path());
+    assert!(!out.status.success());
+    let err = stderr_json(&out);
+    assert_eq!(err["error"]["kind"], "invalid_docx");
+    assert!(err["error"]["message"].as_str().unwrap().contains("メディアパス"));
+}
+
+fn empty_tc_mar_parts() -> Vec<(String, Vec<u8>)> {
+    let document = format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body>
+<w:tbl><w:tr><w:tc><w:tcPr><w:tcMar/><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+</w:body></w:document>"#
+    );
+    strings(vec![
+        ("word/document.xml", document),
+        (
+            "word/_rels/document.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#.to_string(),
+        ),
+    ])
+}
+
+/// Scenario: 空の tcMar が後続の tcPr 属性を飲み込まない
+#[test]
+fn read_empty_tc_mar_keeps_following_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "tcmar.docx", empty_tc_mar_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let cell = &json["sections"][0]["blocks"][0]["rows"][0]["cells"][0];
+    assert_eq!(cell["vAlign"], "center");
+    assert!(cell["tcMar"].as_str().unwrap().contains("tcMar"));
+}
+
+fn num_id_only_parts() -> Vec<(String, Vec<u8>)> {
+    let document = format!(
+        r#"<w:document xmlns:w="{W_NS}"><w:body>
+<w:p><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>番号付き</w:t></w:r></w:p>
+</w:body></w:document>"#
+    );
+    strings(vec![
+        ("word/document.xml", document),
+        (
+            "word/_rels/document.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>"#.to_string(),
+        ),
+    ])
+}
+
+/// Scenario: ilvl を省略した段落は numId を保持し ilvl=0 とする
+#[test]
+fn read_num_id_only_defaults_ilvl_to_zero() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "num.docx", num_id_only_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let para = &json["sections"][0]["blocks"][0];
+    assert_eq!(para["num"]["numId"], 1);
+    assert_eq!(para["num"]["ilvl"], 0);
+}
+
+fn paragraphs_with_drawing_parts() -> Vec<(String, Vec<u8>)> {
+    let document = format!(
+        r#"<w:document xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:body>
+<w:p><w:r><w:t>段落1</w:t></w:r></w:p>
+<w:p><w:r><w:t>段落2</w:t></w:r><w:r>{}</w:r></w:p>
+<w:p><w:r><w:t>段落3</w:t></w:r></w:p>
+</w:body></w:document>"#,
+        body_drawing("rIdBodyImg")
+    );
+    let mut parts = strings(vec![
+        ("word/document.xml", document),
+        (
+            "word/_rels/document.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdBodyImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/body.png"/></Relationships>"#.to_string(),
+        ),
+    ]);
+    parts.push(("word/media/body.png".to_string(), FAKE_PNG.to_vec()));
+    parts
+}
+
+/// Scenario: --para で絞り込んだ後、範囲外の drawing アンカーが残らない
+#[test]
+fn read_para_filter_removes_out_of_range_drawings() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "para.docx", paragraphs_with_drawing_parts());
+    let json = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--para", "1:1"],
+        dir.path(),
+    ));
+    let blocks = json["sections"][0]["blocks"].as_array().unwrap();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["index"], 1);
+    let media = json["media"].as_array().unwrap();
+    assert_eq!(media.len(), 1);
+    assert!(media[0]["anchor"].is_null());
+}

@@ -12,7 +12,8 @@ use crate::ir::{
 };
 use crate::package::OfficePackage;
 use crate::xmlutil::{
-    attr_value, capture_element, local_name, parse_rels, raw_slice, resolve_target, text_content,
+    attr_value, capture_element, dirname, local_name, parse_rels, raw_slice, rels_path_of,
+    resolve_target, text_content,
 };
 
 #[derive(Default)]
@@ -77,6 +78,7 @@ pub struct DrawingInfo {
     pub kind: String,
     pub name: Option<String>,
     pub embed_rid: Option<String>,
+    pub target: Option<String>,
     pub ext: Option<AnchorSize>,
     pub pos_h: Option<PosOffset>,
     pub pos_v: Option<PosOffset>,
@@ -188,6 +190,7 @@ pub fn parse_drawing_xml(xml: &str) -> Result<DrawingInfo, AppError> {
         kind: kind.unwrap_or_else(|| "inline".to_string()),
         name,
         embed_rid,
+        target: None,
         ext,
         pos_h,
         pos_v,
@@ -203,10 +206,11 @@ pub fn parse_document(
     let rels = parse_rels(&package.read_part("word/_rels/document.xml.rels")?)?;
     let mut drawings = Vec::new();
     let (mut body_blocks, mut unhandled) =
-        parse_blocks(&document_xml, "body", &mut drawings, styles, &rels)?;
+        parse_blocks(&document_xml, "body", &mut drawings, styles, &rels, "word")?;
 
     if let Some((from, to)) = para_range {
         body_blocks.retain(|block| (from..=to).contains(&block.index()));
+        drawings.retain(|d| d.section != "body" || (from..=to).contains(&d.block));
     }
 
     let body_sectpr = unhandled
@@ -232,8 +236,20 @@ pub fn parse_document(
             };
             let part = resolve_target("word", target);
             let xml = package.read_part(&part)?;
+            let section_rels = package
+                .read_part_opt(&rels_path_of(&part))?
+                .map(|rels_xml| parse_rels(&rels_xml))
+                .transpose()?
+                .unwrap_or_default();
             let section_type = format!("{kind}-{reference_type}");
-            let (blocks, extra) = parse_blocks(&xml, &section_type, &mut drawings, styles, &rels)?;
+            let (blocks, extra) = parse_blocks(
+                &xml,
+                &section_type,
+                &mut drawings,
+                styles,
+                &section_rels,
+                dirname(&part),
+            )?;
             sections.push(DocxSection {
                 section_type,
                 blocks,
@@ -286,6 +302,7 @@ fn parse_blocks(
     drawings: &mut Vec<DocxDrawingRef>,
     styles: &DocxStyles,
     rels: &HashMap<String, String>,
+    base_dir: &str,
 ) -> Result<(Vec<Block>, Vec<RawElement>), AppError> {
     let mut reader = Reader::from_str(xml);
     let mut blocks = Vec::new();
@@ -303,14 +320,14 @@ fn parse_blocks(
                         let raw = capture_element(&mut reader, xml, start, lname)?;
                         let index = blocks.len() as u32 + 1;
                         blocks.push(parse_paragraph(
-                            &raw.xml, index, section, drawings, styles, rels,
+                            &raw.xml, index, section, drawings, styles, rels, base_dir,
                         )?);
                     }
                     b"tbl" => {
                         let raw = capture_element(&mut reader, xml, start, lname)?;
                         let index = blocks.len() as u32 + 1;
                         blocks.push(parse_table(
-                            &raw.xml, index, section, drawings, styles, rels,
+                            &raw.xml, index, section, drawings, styles, rels, base_dir,
                         )?);
                     }
                     _ => unhandled.push(capture_element(&mut reader, xml, start, lname)?),
@@ -384,6 +401,7 @@ fn parse_paragraph(
     drawings: &mut Vec<DocxDrawingRef>,
     _styles: &DocxStyles,
     rels: &HashMap<String, String>,
+    base_dir: &str,
 ) -> Result<Block, AppError> {
     let mut reader = Reader::from_str(xml);
     let mut style = None;
@@ -531,11 +549,17 @@ fn parse_paragraph(
                     },
                     b"drawing" => {
                         let raw = capture_element(&mut reader, xml, start, lname)?;
+                        let mut info = parse_drawing_xml(&raw.xml)?;
+                        if let Some(rid) = &info.embed_rid {
+                            info.target = rels
+                                .get(rid)
+                                .map(|target| resolve_target(base_dir, target));
+                        }
                         drawings.push(DocxDrawingRef {
                             section: section.to_string(),
                             block: index,
                             run: runs.len() as u32,
-                            info: parse_drawing_xml(&raw.xml)?,
+                            info,
                         });
                         drawing_in_run = true;
                     }
@@ -547,7 +571,7 @@ fn parse_paragraph(
                 let lname = local_name(qname.as_ref());
                 match lname {
                     b"p" => {}
-                    b"pPr" => in_ppr = true,
+                    b"pPr" => {}
                     b"numPr" => in_numpr = true,
                     b"pStyle" if in_ppr => style = attr_value(&e, "w:val"),
                     b"jc" if in_ppr => jc = attr_value(&e, "w:val"),
@@ -579,7 +603,7 @@ fn parse_paragraph(
                         text.clear();
                         drawing_in_run = false;
                     }
-                    b"rPr" => in_rpr = true,
+                    b"rPr" => {}
                     b"rStyle" if in_rpr => attrs.style = attr_value(&e, "w:val"),
                     b"b" if in_rpr => attrs.bold = flag(&e),
                     b"i" if in_rpr => attrs.italic = flag(&e),
@@ -728,9 +752,10 @@ fn parse_paragraph(
     Ok(Block::Paragraph {
         index,
         style,
-        num: num_id
-            .zip(ilvl)
-            .map(|(num_id, ilvl)| NumProps { num_id, ilvl }),
+        num: num_id.map(|num_id| NumProps {
+            num_id,
+            ilvl: ilvl.unwrap_or(0),
+        }),
         jc,
         ind,
         spacing,
@@ -747,6 +772,7 @@ fn parse_table(
     drawings: &mut Vec<DocxDrawingRef>,
     styles: &DocxStyles,
     rels: &HashMap<String, String>,
+    base_dir: &str,
 ) -> Result<Block, AppError> {
     let mut reader = Reader::from_str(xml);
     let mut grid = Vec::new();
@@ -770,7 +796,9 @@ fn parse_table(
                     }
                     b"tr" => {
                         let raw = capture_element(&mut reader, xml, start, lname)?;
-                        rows.push(parse_row(&raw.xml, section, drawings, styles, rels)?);
+                        rows.push(parse_row(
+                            &raw.xml, section, drawings, styles, rels, base_dir,
+                        )?);
                     }
                     _ => unhandled.push(capture_element(&mut reader, xml, start, lname)?),
                 }
@@ -809,6 +837,7 @@ fn parse_row(
     drawings: &mut Vec<DocxDrawingRef>,
     styles: &DocxStyles,
     rels: &HashMap<String, String>,
+    base_dir: &str,
 ) -> Result<TableRow, AppError> {
     let mut reader = Reader::from_str(xml);
     let mut cells = Vec::new();
@@ -827,7 +856,9 @@ fn parse_row(
                     b"trPr" => in_trpr = true,
                     b"tc" => {
                         let raw = capture_element(&mut reader, xml, start, b"tc")?;
-                        cells.push(parse_cell(&raw.xml, section, drawings, styles, rels)?);
+                        cells.push(parse_cell(
+                            &raw.xml, section, drawings, styles, rels, base_dir,
+                        )?);
                     }
                     b"trHeight" if in_trpr => {
                         let val = attr_value(&e, "w:val").and_then(|v| v.parse().ok());
@@ -881,6 +912,7 @@ fn parse_cell(
     drawings: &mut Vec<DocxDrawingRef>,
     styles: &DocxStyles,
     rels: &HashMap<String, String>,
+    base_dir: &str,
 ) -> Result<TableCell, AppError> {
     let mut reader = Reader::from_str(xml);
     let mut blocks = Vec::new();
@@ -903,14 +935,14 @@ fn parse_cell(
                         let raw = capture_element(&mut reader, xml, start, lname)?;
                         let index = blocks.len() as u32 + 1;
                         blocks.push(parse_paragraph(
-                            &raw.xml, index, section, drawings, styles, rels,
+                            &raw.xml, index, section, drawings, styles, rels, base_dir,
                         )?);
                     }
                     b"tbl" => {
                         let raw = capture_element(&mut reader, xml, start, lname)?;
                         let index = blocks.len() as u32 + 1;
                         blocks.push(parse_table(
-                            &raw.xml, index, section, drawings, styles, rels,
+                            &raw.xml, index, section, drawings, styles, rels, base_dir,
                         )?);
                     }
                     _ => unhandled.push(capture_element(&mut reader, xml, start, lname)?),
@@ -982,7 +1014,7 @@ fn parse_tc_pr(xml: &str) -> TcPrResult {
     loop {
         let start = reader.buffer_position();
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+            Ok(Event::Start(e)) => {
                 let qname = e.name();
                 match local_name(qname.as_ref()) {
                     b"gridSpan" => grid_span = attr_value(&e, "w:val").and_then(|v| v.parse().ok()),
@@ -996,8 +1028,8 @@ fn parse_tc_pr(xml: &str) -> TcPrResult {
                         tcw = Some(DocxTcW { w, type_ });
                     }
                     b"shd" => {
-                        let end = reader.buffer_position();
-                        shd = Some(raw_slice(xml, start, end, b"shd").xml);
+                        let raw = capture_element(&mut reader, xml, start, b"shd").ok();
+                        shd = raw.map(|r| r.xml);
                     }
                     b"tcMar" => {
                         let raw = capture_element(&mut reader, xml, start, b"tcMar").ok();
@@ -1012,6 +1044,38 @@ fn parse_tc_pr(xml: &str) -> TcPrResult {
                     b"tcBorders" => {
                         let raw = capture_element(&mut reader, xml, start, b"tcBorders").ok();
                         tc_borders = raw.map(|r| r.xml);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Empty(e)) => {
+                let qname = e.name();
+                let end = reader.buffer_position();
+                match local_name(qname.as_ref()) {
+                    b"gridSpan" => grid_span = attr_value(&e, "w:val").and_then(|v| v.parse().ok()),
+                    b"vMerge" => {
+                        v_merge =
+                            Some(attr_value(&e, "w:val").unwrap_or_else(|| "continue".to_string()));
+                    }
+                    b"tcW" => {
+                        let w = attr_value(&e, "w:w").and_then(|v| v.parse().ok()).unwrap_or(0);
+                        let type_ = attr_value(&e, "w:type").unwrap_or_else(|| "auto".to_string());
+                        tcw = Some(DocxTcW { w, type_ });
+                    }
+                    b"shd" => {
+                        shd = Some(raw_slice(xml, start, end, b"shd").xml);
+                    }
+                    b"tcMar" => {
+                        tc_mar = Some(raw_slice(xml, start, end, b"tcMar").xml);
+                    }
+                    b"vAlign" => {
+                        v_align = attr_value(&e, "w:val");
+                    }
+                    b"noWrap" => {
+                        no_wrap = Some(flag(&e));
+                    }
+                    b"tcBorders" => {
+                        tc_borders = Some(raw_slice(xml, start, end, b"tcBorders").xml);
                     }
                     _ => {}
                 }

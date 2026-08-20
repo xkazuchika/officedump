@@ -33,6 +33,26 @@ impl OfficeFormat {
             OfficeFormat::Pptx => AppError::InvalidPptx(msg),
         }
     }
+
+    /// zip 内のメディアパスから、出力先 `media/` 以下の参照パスを生成する。
+    /// `..` による逸脱や空・カレント成分は正規化し、範囲外なら `None` を返す。
+    pub fn media_ref(&self, part_path: &str) -> Option<String> {
+        let rest = part_path.strip_prefix(self.media_prefix())?;
+        let mut comps: Vec<&str> = Vec::new();
+        for c in rest.split('/') {
+            match c {
+                "" | "." => {}
+                ".." => {
+                    comps.pop()?;
+                }
+                c => comps.push(c),
+            }
+        }
+        if comps.is_empty() {
+            return None;
+        }
+        Some(format!("media/{}", comps.join("/")))
+    }
 }
 
 /// 形式共通の zip アクセス層。
@@ -91,14 +111,23 @@ impl OfficePackage {
         let media_dir = out_dir.join("media");
         std::fs::create_dir_all(&media_dir)?;
         for name in names {
-            let base = name.rsplit('/').next().unwrap_or(&name).to_string();
+            let json_ref = self.format.media_ref(&name).ok_or_else(|| {
+                fmt.invalid(format!("メディアパスが不正です: {name}"))
+            })?;
+            let sub = json_ref
+                .strip_prefix("media/")
+                .expect("media_ref は media/ プレフィックスを持つ");
+            let out_path = media_dir.join(sub);
+            if let Some(parent) = out_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             let mut buf = Vec::new();
             self.zip
                 .by_name(&name)
                 .map_err(|e| fmt.invalid(format!("{name} を開けません: {e}")))?
                 .read_to_end(&mut buf)?;
-            std::fs::write(media_dir.join(&base), &buf)?;
-            refs.push(format!("media/{base}"));
+            std::fs::write(&out_path, &buf)?;
+            refs.push(json_ref);
         }
         refs.sort();
         Ok(refs)

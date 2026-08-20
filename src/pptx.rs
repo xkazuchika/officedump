@@ -254,21 +254,34 @@ fn parse_picture(
 fn parse_graphic_frame(xml: &str, z_order: u32) -> Result<PptxShape, AppError> {
     let mut reader = Reader::from_str(xml);
     let mut name = None;
+    let mut data_uri = None;
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e))
-                if local_name(e.name().as_ref()) == b"cNvPr" =>
-            {
-                name = attr_value(&e, "name");
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let qname = e.name();
+                match local_name(qname.as_ref()) {
+                    b"cNvPr" => name = attr_value(&e, "name"),
+                    b"graphicData" => {
+                        data_uri = attr_value(&e, "uri");
+                    }
+                    _ => {}
+                }
             }
             Ok(Event::Eof) => break,
             Err(e) => return Err(AppError::Xml(format!("graphicFrame のパース失敗: {e}"))),
             _ => {}
         }
     }
-    let table = parse_table(xml)?;
+    let uri = data_uri.as_deref().unwrap_or("");
+    let (shape_type, table) = if uri.contains("chart") {
+        ("chart".to_string(), None)
+    } else if uri.contains("table") || uri.is_empty() {
+        ("table".to_string(), parse_table(xml)?)
+    } else {
+        ("graphicFrame".to_string(), None)
+    };
     Ok(PptxShape {
-        shape_type: "table".to_string(),
+        shape_type,
         z_order,
         name,
         placeholder: None,

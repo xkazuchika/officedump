@@ -828,3 +828,78 @@ fn read_stdout_mode_omits_content_file() {
     assert!(!out_dir.join("content.json").exists());
     assert!(out_dir.join("media").is_dir());
 }
+
+// ---------------------------------------------------------------------------
+// レビュー指摘に対する回帰テスト
+// ---------------------------------------------------------------------------
+
+/// <mergeCell> が Start/End 形式でも読める
+fn start_end_merge_parts() -> Vec<(String, Vec<u8>)> {
+    let sheet = format!(
+        r#"<worksheet {MAIN_NS}><dimension ref="A1:C1"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>A</t></is></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"></mergeCell></mergeCells></worksheet>"#
+    );
+    parts(vec![
+        ("xl/workbook.xml", workbook_xml(&["結合"])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels_xml(1)),
+        ("xl/worksheets/sheet1.xml", sheet),
+    ])
+}
+
+#[test]
+fn read_start_end_merge_cell() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = write_xlsx(dir.path(), "merge.xlsx", start_end_merge_parts());
+    let out = officedump(&["read", f.to_str().unwrap()], dir.path());
+    let json = stdout_json(&out);
+    let merged = json["sheets"][0]["mergedCells"].as_array().unwrap();
+    assert!(merged.iter().any(|m| m == "A1:C1"));
+}
+
+/// 逆転した範囲を正規化して読める
+#[test]
+fn read_reversed_range() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = write_xlsx(dir.path(), "rows.xlsx", rows_parts());
+    let out = officedump(
+        &["read", f.to_str().unwrap(), "--range", "B1:A1"],
+        dir.path(),
+    );
+    let json = stdout_json(&out);
+    let refs: Vec<&str> = json["sheets"][0]["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["ref"].as_str().unwrap())
+        .collect();
+    assert!(refs.contains(&"A1"));
+    assert!(refs.contains(&"B1"));
+}
+
+/// 画像を含まない drawing でも .rels がなくても読める
+fn empty_drawing_parts() -> Vec<(String, Vec<u8>)> {
+    let sheet = format!(
+        r#"<worksheet {MAIN_NS} {R_NS}><dimension ref="A1:A1"/><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Hi</t></is></c></row></sheetData><drawing r:id="rId5"/></worksheet>"#
+    );
+    let sheet_rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>"#.to_string();
+    let drawing = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <xdr:absoluteAnchor><xdr:pos x="0" y="0"/><xdr:ext cx="100000" cy="100000"/></xdr:absoluteAnchor>
+</xdr:wsDr>"#
+        .to_string();
+    parts(vec![
+        ("xl/workbook.xml", workbook_xml(&["空図"])),
+        ("xl/_rels/workbook.xml.rels", workbook_rels_xml(1)),
+        ("xl/worksheets/sheet1.xml", sheet),
+        ("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels),
+        ("xl/drawings/drawing1.xml", drawing),
+    ])
+}
+
+#[test]
+fn read_empty_drawing_without_rels() {
+    let dir = tempfile::tempdir().unwrap();
+    let f = write_xlsx(dir.path(), "empty_draw.xlsx", empty_drawing_parts());
+    let out = officedump(&["read", f.to_str().unwrap()], dir.path());
+    let json = stdout_json(&out);
+    assert!(json["media"].as_array().unwrap().is_empty());
+}

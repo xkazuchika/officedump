@@ -423,3 +423,32 @@ fn read_row_height() {
     let row = &content["slides"][0]["shapes"][1]["table"]["rows"][0];
     assert_eq!(row["h"], 600);
 }
+
+fn chart_parts() -> Vec<(String, Vec<u8>)> {
+    let slide = format!(
+        r#"<p:sld xmlns:p="{P_NS}" xmlns:a="{A_NS}" xmlns:r="{R_NS}">
+<p:cSld><p:spTree>
+<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="1" name="グラフ"/></p:nvGraphicFramePr><p:xfrm><a:off x="100" y="200"/><a:ext cx="300" cy="400"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphicData></a:graphic></p:graphicFrame>
+</p:spTree></p:cSld>
+</p:sld>"#
+    );
+    strings(vec![
+        ("ppt/presentation.xml", presentation_xml(&[(1, "rId1")])),
+        ("ppt/_rels/presentation.xml.rels", presentation_rels(&[("rId1", "slides/slide1.xml")])),
+        ("ppt/slides/slide1.xml", slide),
+    ])
+}
+
+/// Scenario: 表以外の graphicFrame（チャート）を table 型にしない
+#[test]
+fn read_chart_graphic_frame_is_not_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "chart.pptx", chart_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let shape = &content["slides"][0]["shapes"][0];
+    assert_eq!(shape["type"], "chart");
+    assert!(shape["table"].is_null());
+}
