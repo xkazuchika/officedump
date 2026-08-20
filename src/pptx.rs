@@ -322,6 +322,14 @@ fn parse_text_frame(xml: &str) -> Result<Option<PptxTextFrame>, AppError> {
                                 italic: attrs.1,
                                 underline: attrs.2,
                                 strike: false,
+                                sz: None,
+                                color: None,
+                                rfonts: None,
+                                vert_align: None,
+                                spacing: None,
+                                kern: None,
+                                position: None,
+                                rpr_xml: None,
                             });
                         }
                     }

@@ -104,6 +104,21 @@ officedump read report.docx --para 20:45
 - `--para N:M` は本文ブロックだけを絞ります
 - ヘッダー/フッターは常に content.json に保持されます
 
+#### docx の IR 構造
+
+`read` の `content.json` は次の構造を持ちます。
+
+- `sections[]`: 各セクションの `type`（body/header-{type}/footer-{type}）/ `blocks` / `sectPrXml`（ページサイズ・マージン等の生 XML）
+  - `blocks[]`: `paragraph` または `table` 型
+    - `paragraph`: `index` / `style` / `num` / `jc`（配置）/ `ind`（インデント）/ `spacing`（段落間隔）/ `pPrXml`（pPr 生 XML）/ `runs` / `unhandled`
+      - `runs[]`: `text` / `hyperlink` / `field` 型
+        - `text`: `text` / `style` / `bold` / `italic` / `underline` / `strike` / `sz`（半ポイント）/ `color` / `rfonts`（フォント）/ `vertAlign` / `spacing`（字間）/ `kern` / `position` / `rPrXml`（rPr 生 XML）
+        - `hyperlink`: `href` / `anchor` / `history` / `tooltip` / `tgtFrame` / `runs`
+        - `field`: `instr` / `text` / `fldLock` / `dirty`
+    - `table`: `index` / `grid` / `rows` / `tblPrXml`（表プロパティ生 XML）/ `unhandled`
+      - `rows[]`: `cells` / `trHeight`（行の高さ）/ `cantSplit` / `tblHeader`
+        - `cells[]`: `gridSpan` / `vMerge` / `blocks` / `tcW`（セル幅）/ `shd`（塗りつぶし生 XML）/ `tcMar`（セルマージン生 XML）/ `vAlign` / `noWrap` / `tcBorders`（生 XML）
+
 ### pptx
 
 `inspect` でスライド数とタイトルプレースホルダーを見てから、対象スライドを `--slide` で指定します。

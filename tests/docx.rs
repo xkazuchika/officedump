@@ -321,3 +321,148 @@ fn read_docx_uses_manifest_and_stdout_mode() {
     assert!(!stdout_dir.join("content.json").exists());
     assert!(stdout_dir.join("media").is_dir());
 }
+
+// ---------------------------------------------------------------------------
+// テスト: docx 精度向上 (improve-docx-accuracy)
+// ---------------------------------------------------------------------------
+
+fn accuracy_parts() -> Vec<(String, Vec<u8>)> {
+    let document = format!(
+        r#"<w:document xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:body>
+<w:p><w:pPr><w:jc w:val="center"/><w:ind w:left="720" w:firstLine="360"/><w:spacing w:before="120" w:after="60" w:line="360" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="24"/><w:color w:val="FF0000"/><w:rFonts w:ascii="Arial" w:eastAsia="MS Gothic"/><w:vertAlign w:val="superscript"/><w:spacing w:val="20"/><w:kern w:val="10"/><w:position w:val="5"/></w:rPr><w:t>書式付きテキスト</w:t></w:r></w:p>
+<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>
+<w:tr><w:trPr><w:trHeight w:val="720" w:hRule="atLeast"/><w:tblHeader/></w:trPr><w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/><w:shd w:val="clear" w:fill="FFFF00"/><w:tcMar><w:top w:w="100" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+<w:p><w:hyperlink r:id="rId30" w:tooltip="ヒント" w:tgtFrame="_blank"><w:r><w:t>リンク</w:t></w:r></w:hyperlink><w:r><w:fldChar w:fldCharType="begin" w:dirty="1" w:fldLock="1"/></w:r><w:r><w:instrText> DATE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2026/01/01</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>
+<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:bottom="1440" w:left="1800" w:right="1800"/></w:sectPr>
+</w:body></w:document>"#
+    );
+    let mut parts = strings(vec![
+        ("word/document.xml", document),
+        ("word/_rels/document.xml.rels", document_rels()),
+        ("word/styles.xml", styles_xml()),
+    ]);
+    parts.push(("word/media/image1.png".to_string(), FAKE_PNG.to_vec()));
+    parts.push(("word/media/image2.png".to_string(), FAKE_PNG.to_vec()));
+    parts
+}
+
+/// Scenario: ラン書式プロパティの保持
+#[test]
+fn read_run_format_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let body = &json["sections"][0]["blocks"];
+    let run = &body[0]["runs"][0];
+    assert_eq!(run["text"], "書式付きテキスト");
+    assert_eq!(run["bold"], true);
+    assert_eq!(run["sz"], 24);
+    assert_eq!(run["color"], "FF0000");
+    assert_eq!(run["rfonts"]["ascii"], "Arial");
+    assert_eq!(run["rfonts"]["eastAsia"], "MS Gothic");
+    assert_eq!(run["vertAlign"], "superscript");
+    assert_eq!(run["spacing"], 20);
+    assert_eq!(run["kern"], 10);
+    assert_eq!(run["position"], 5);
+    assert!(run["rPrXml"].as_str().unwrap().contains("w:rPr"));
+}
+
+/// Scenario: 段落プロパティの保持
+#[test]
+fn read_paragraph_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let body = &json["sections"][0]["blocks"];
+    assert_eq!(body[0]["jc"], "center");
+    assert_eq!(body[0]["ind"]["left"], 720);
+    assert_eq!(body[0]["ind"]["firstLine"], 360);
+    assert_eq!(body[0]["spacing"]["before"], 120);
+    assert_eq!(body[0]["spacing"]["after"], 60);
+    assert_eq!(body[0]["spacing"]["line"], 360);
+    assert_eq!(body[0]["spacing"]["lineRule"], "auto");
+    assert!(body[0]["pPrXml"].as_str().unwrap().contains("w:pPr"));
+}
+
+/// Scenario: 表プロパティの保持
+#[test]
+fn read_table_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let body = &json["sections"][0]["blocks"];
+    assert_eq!(body[1]["type"], "table");
+    assert!(body[1]["tblPrXml"].as_str().unwrap().contains("tblW"));
+    assert!(body[1]["tblPrXml"].as_str().unwrap().contains("tblBorders"));
+}
+
+/// Scenario: 行プロパティの保持
+#[test]
+fn read_row_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let body = &json["sections"][0]["blocks"];
+    let row = &body[1]["rows"][0];
+    assert_eq!(row["trHeight"]["val"], 720);
+    assert_eq!(row["trHeight"]["hRule"], "atLeast");
+    assert_eq!(row["tblHeader"], true);
+}
+
+/// Scenario: セルプロパティの保持
+#[test]
+fn read_cell_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let body = &json["sections"][0]["blocks"];
+    let cell = &body[1]["rows"][0]["cells"][0];
+    assert_eq!(cell["tcW"]["w"], 2500);
+    assert_eq!(cell["tcW"]["type"], "dxa");
+    assert!(cell["shd"].as_str().unwrap().contains("FFFF00"));
+    assert_eq!(cell["vAlign"], "center");
+    assert!(cell["tcMar"].as_str().unwrap().contains("w:top"));
+}
+
+/// Scenario: ページサイズとマージンの保持
+#[test]
+fn read_section_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let sect = &json["sections"][0];
+    assert!(sect["sectPrXml"].as_str().unwrap().contains("pgSz"));
+    assert!(sect["sectPrXml"].as_str().unwrap().contains("11906"));
+    assert!(sect["sectPrXml"].as_str().unwrap().contains("pgMar"));
+    assert!(sect["sectPrXml"].as_str().unwrap().contains("1440"));
+}
+
+/// Scenario: ハイパーリンクの追加属性保持
+#[test]
+fn read_hyperlink_extra_attributes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let body = &json["sections"][0]["blocks"];
+    let link = &body[2]["runs"][0];
+    assert_eq!(link["kind"], "hyperlink");
+    assert_eq!(link["href"], "https://example.com");
+    assert_eq!(link["tooltip"], "ヒント");
+    assert_eq!(link["tgtFrame"], "_blank");
+}
+
+/// Scenario: フィールドの属性保持
+#[test]
+fn read_field_attributes() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_docx(dir.path(), "fmt.docx", accuracy_parts());
+    let json = stdout_json(&officedump(&["read", file.to_str().unwrap()], dir.path()));
+    let body = &json["sections"][0]["blocks"];
+    let field = &body[2]["runs"][1];
+    assert_eq!(field["kind"], "field");
+    assert_eq!(field["instr"], "DATE");
+    assert_eq!(field["text"], "2026/01/01");
+    assert_eq!(field["dirty"], true);
+    assert_eq!(field["fldLock"], true);
+}

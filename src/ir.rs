@@ -394,6 +394,8 @@ pub struct DocxSection {
     #[serde(rename = "type")]
     pub section_type: String,
     pub blocks: Vec<Block>,
+    #[serde(rename = "sectPrXml", skip_serializing_if = "Option::is_none")]
+    pub sectpr_xml: Option<String>,
 }
 
 /// 文書のブロック。1始まりの `index` はメディアアンカー・部分読み出し・
@@ -409,6 +411,14 @@ pub enum Block {
         style: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         num: Option<NumProps>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        jc: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ind: Option<DocxInd>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        spacing: Option<DocxSpacing>,
+        #[serde(rename = "pPrXml", skip_serializing_if = "Option::is_none")]
+        ppr_xml: Option<String>,
         runs: Vec<RunNode>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         unhandled: Vec<RawElement>,
@@ -419,6 +429,8 @@ pub enum Block {
         /// tblGrid の各列幅（twips 生値）
         grid: Vec<u32>,
         rows: Vec<TableRow>,
+        #[serde(rename = "tblPrXml", skip_serializing_if = "Option::is_none")]
+        tblpr_xml: Option<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         unhandled: Vec<RawElement>,
     },
@@ -453,10 +465,23 @@ pub enum RunNode {
         #[serde(skip_serializing_if = "Option::is_none")]
         anchor: Option<String>,
         runs: Vec<TextRun>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        history: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tooltip: Option<String>,
+        #[serde(rename = "tgtFrame", skip_serializing_if = "Option::is_none")]
+        tgt_frame: Option<String>,
     },
     /// フィールド。命令テキストは原文のまま保持し、評価はしない。
     #[serde(rename = "field")]
-    Field { instr: String, text: String },
+    Field {
+        instr: String,
+        text: String,
+        #[serde(rename = "fldLock", skip_serializing_if = "Option::is_none")]
+        fld_lock: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dirty: Option<bool>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -473,11 +498,76 @@ pub struct TextRun {
     pub underline: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub strike: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sz: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rfonts: Option<DocxRFonts>,
+    #[serde(rename = "vertAlign", skip_serializing_if = "Option::is_none")]
+    pub vert_align: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spacing: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kern: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<i32>,
+    #[serde(rename = "rPrXml", skip_serializing_if = "Option::is_none")]
+    pub rpr_xml: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct DocxRFonts {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ascii: Option<String>,
+    #[serde(rename = "hAnsi", skip_serializing_if = "Option::is_none")]
+    pub h_ansi: Option<String>,
+    #[serde(rename = "eastAsia", skip_serializing_if = "Option::is_none")]
+    pub east_asian: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cs: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct DocxInd {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<i32>,
+    #[serde(rename = "firstLine", skip_serializing_if = "Option::is_none")]
+    pub first_line: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hanging: Option<i32>,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct DocxSpacing {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<i32>,
+    #[serde(rename = "lineRule", skip_serializing_if = "Option::is_none")]
+    pub line_rule: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct TableRow {
     pub cells: Vec<TableCell>,
+    #[serde(rename = "trHeight", skip_serializing_if = "Option::is_none")]
+    pub tr_height: Option<DocxTrHeight>,
+    #[serde(rename = "cantSplit", skip_serializing_if = "Option::is_none")]
+    pub cant_split: Option<bool>,
+    #[serde(rename = "tblHeader", skip_serializing_if = "Option::is_none")]
+    pub tbl_header: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocxTrHeight {
+    pub val: i32,
+    #[serde(rename = "hRule", skip_serializing_if = "Option::is_none")]
+    pub h_rule: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -490,6 +580,25 @@ pub struct TableCell {
     pub blocks: Vec<Block>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unhandled: Vec<RawElement>,
+    #[serde(rename = "tcW", skip_serializing_if = "Option::is_none")]
+    pub tcw: Option<DocxTcW>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shd: Option<String>,
+    #[serde(rename = "tcMar", skip_serializing_if = "Option::is_none")]
+    pub tc_mar: Option<String>,
+    #[serde(rename = "vAlign", skip_serializing_if = "Option::is_none")]
+    pub v_align: Option<String>,
+    #[serde(rename = "noWrap", skip_serializing_if = "Option::is_none")]
+    pub no_wrap: Option<bool>,
+    #[serde(rename = "tcBorders", skip_serializing_if = "Option::is_none")]
+    pub tc_borders: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocxTcW {
+    pub w: i32,
+    #[serde(rename = "type")]
+    pub type_: String,
 }
 
 // ---------------------------------------------------------------------------
