@@ -129,8 +129,22 @@ officedump read deck.pptx --slide 5:12
 ```
 
 - `--slide N:M` は1始まりのスライド範囲を絞ります
-- 図形の `zOrder`、EMU生値の `geometry`、テキストラン、表、画像アンカーを保持します
+- 図形の `zOrder`、EMU生値の `geometry`（`rot`/`flipH`/`flipV`含む）、テキストラン、表、画像アンカーを保持します
 - 読み順や図形・スライドの意味は推測しません
+
+#### pptx の IR 構造
+
+`read` の `content.json` は次の構造を持ちます。
+
+- `slides[]`: 各スライドの `index` / `shapes` / `unhandledElements`
+  - `shapes[]`: `type`（shape/picture/table）/ `zOrder` / `name` / `placeholder` / `placeholderDetail`（`type`/`idx`/`sz`/`orient`）/ `prstGeom`（プリセット図形種別）/ `spPrXml`（spPr 生 XML）/ `geometry` / `text` / `table`
+    - `geometry`: `x` / `y` / `cx` / `cy` / `rot`（1/60000度）/ `flipH` / `flipV`
+    - `text`: `paragraphs` / `bodyPrXml`（bodyPr 生 XML）
+      - `paragraphs[]`: `runs` / `algn` / `lvl` / `buChar` / `buAutoNum` / `marL` / `indent` / `lnSpc` / `spcBef` / `spcAft`
+        - `runs[]`: `text` / `bold` / `italic` / `underline` / `strike` / `sz`（1/100pt）/ `color` / `rfonts.ascii`（typeface）
+    - `table`: `columns` / `rows`
+      - `rows[]`: `cells` / `h`（行の高さ EMU）
+        - `cells[]`: `text` / `gridSpan` / `rowSpan` / `hMerge` / `vMerge`
 
 ## `--stdout` を使う場合
 

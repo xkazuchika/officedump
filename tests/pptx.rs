@@ -281,3 +281,145 @@ fn reports_invalid_pptx_as_json_error() {
     assert!(!out.status.success());
     assert_eq!(stderr_json(&out)["error"]["kind"], "invalid_pptx");
 }
+
+// ---------------------------------------------------------------------------
+// テスト: pptx 精度向上 (improve-pptx-accuracy)
+// ---------------------------------------------------------------------------
+
+fn stdout_json(out: &Output) -> Value {
+    assert!(out.status.success(), "コマンドが失敗: {out:?}");
+    serde_json::from_slice(&out.stdout).expect("標準出力が JSON ではない")
+}
+
+fn accuracy_parts() -> Vec<(String, Vec<u8>)> {
+    let slide = format!(
+        r#"<p:sld xmlns:p="{P_NS}" xmlns:a="{A_NS}" xmlns:r="{R_NS}">
+<p:cSld><p:spTree>
+<p:sp><p:nvSpPr><p:cNvPr id="1" name="Title"/><p:nvPr><p:ph type="title" idx="0" sz="half"/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm rot="2700000" flipH="1"><a:off x="100" y="200"/><a:ext cx="300" cy="400"/></a:xfrm><a:prstGeom prst="roundRect"/></p:spPr><p:txBody><a:bodyPr vert="vert" anchor="ctr"/><a:lstStyle/><a:p><a:pPr algn="ctr" lvl="1" marL="457200" indent="228600"><a:buChar char="•"/></a:pPr><a:r><a:rPr b="1" sz="2400" strike="singleStrike"/><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:latin typeface="Arial"/><a:t>タイトル</a:t></a:r></a:p></p:txBody></p:sp>
+<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="2" name="表"/></p:nvGraphicFramePr><p:xfrm><a:off x="1000" y="1100"/><a:ext cx="1200" cy="1300"/></p:xfrm><a:graphic><a:graphicData><a:tbl><a:tblGrid><a:gridCol w="400"/><a:gridCol w="500"/></a:tblGrid><a:tr h="600"><a:tc gridSpan="2" rowSpan="1"><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>結合</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>
+</p:spTree></p:cSld>
+</p:sld>"#
+    );
+    strings(vec![
+        ("ppt/presentation.xml", presentation_xml(&[(1, "rId1")])),
+        ("ppt/_rels/presentation.xml.rels", presentation_rels(&[("rId1", "slides/slide1.xml")])),
+        ("ppt/slides/slide1.xml", slide),
+    ])
+}
+
+/// Scenario: 回転と反転の保持
+#[test]
+fn read_rotation_and_flip() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let shape = &content["slides"][0]["shapes"][0];
+    assert_eq!(shape["geometry"]["rot"], 2700000);
+    assert_eq!(shape["geometry"]["flipH"], true);
+}
+
+/// Scenario: プリセット図形種別の保持
+#[test]
+fn read_preset_geometry() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let shape = &content["slides"][0]["shapes"][0];
+    assert_eq!(shape["prstGeom"], "roundRect");
+}
+
+/// Scenario: プレースホルダー属性の保持
+#[test]
+fn read_placeholder_detail() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let shape = &content["slides"][0]["shapes"][0];
+    assert_eq!(shape["placeholderDetail"]["type"], "title");
+    assert_eq!(shape["placeholderDetail"]["idx"], 0);
+    assert_eq!(shape["placeholderDetail"]["sz"], "half");
+}
+
+/// Scenario: テキストランの書式プロパティ保持
+#[test]
+fn read_run_format_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let run = &content["slides"][0]["shapes"][0]["text"]["paragraphs"][0]["runs"][0];
+    assert_eq!(run["text"], "タイトル");
+    assert_eq!(run["bold"], true);
+    assert_eq!(run["sz"], 2400);
+    assert_eq!(run["color"], "FF0000");
+    assert_eq!(run["rfonts"]["ascii"], "Arial");
+    assert_eq!(run["strike"], true);
+}
+
+/// Scenario: 段落プロパティの保持
+#[test]
+fn read_paragraph_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let para = &content["slides"][0]["shapes"][0]["text"]["paragraphs"][0];
+    assert_eq!(para["algn"], "ctr");
+    assert_eq!(para["lvl"], 1);
+    assert_eq!(para["marL"], 457200);
+    assert_eq!(para["indent"], 228600);
+    assert_eq!(para["buChar"], "•");
+}
+
+/// Scenario: テキストボディプロパティの保持
+#[test]
+fn read_body_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let text = &content["slides"][0]["shapes"][0]["text"];
+    assert!(text["bodyPrXml"].as_str().unwrap().contains("bodyPr"));
+}
+
+/// Scenario: セル結合を持つ表の分解
+#[test]
+fn read_table_cell_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let cell = &content["slides"][0]["shapes"][1]["table"]["rows"][0]["cells"][0];
+    assert_eq!(cell["gridSpan"], 2);
+    assert_eq!(cell["rowSpan"], 1);
+}
+
+/// Scenario: 行の高さの保持
+#[test]
+fn read_row_height() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = write_pptx(dir.path(), "acc.pptx", accuracy_parts());
+    let content = stdout_json(&officedump(
+        &["read", file.to_str().unwrap(), "--stdout"],
+        dir.path(),
+    ));
+    let row = &content["slides"][0]["shapes"][1]["table"]["rows"][0];
+    assert_eq!(row["h"], 600);
+}

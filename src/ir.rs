@@ -347,6 +347,12 @@ pub struct PptxShape {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
+    #[serde(rename = "placeholderDetail", skip_serializing_if = "Option::is_none")]
+    pub placeholder_detail: Option<PptxPlaceholder>,
+    #[serde(rename = "prstGeom", skip_serializing_if = "Option::is_none")]
+    pub prst_geom: Option<String>,
+    #[serde(rename = "spPrXml", skip_serializing_if = "Option::is_none")]
+    pub sppr_xml: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry: Option<Geometry>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -355,22 +361,60 @@ pub struct PptxShape {
     pub table: Option<PptxTable>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PptxPlaceholder {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idx: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sz: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orient: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Geometry {
     pub x: i64,
     pub y: i64,
     pub cx: i64,
     pub cy: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rot: Option<i64>,
+    #[serde(rename = "flipH", skip_serializing_if = "Option::is_none")]
+    pub flip_h: Option<bool>,
+    #[serde(rename = "flipV", skip_serializing_if = "Option::is_none")]
+    pub flip_v: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct PptxTextFrame {
     pub paragraphs: Vec<PptxParagraph>,
+    #[serde(rename = "bodyPrXml", skip_serializing_if = "Option::is_none")]
+    pub bodypr_xml: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct PptxParagraph {
     pub runs: Vec<TextRun>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub algn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lvl: Option<u32>,
+    #[serde(rename = "buChar", skip_serializing_if = "Option::is_none")]
+    pub bu_char: Option<String>,
+    #[serde(rename = "buAutoNum", skip_serializing_if = "Option::is_none")]
+    pub bu_auto_num: Option<String>,
+    #[serde(rename = "marL", skip_serializing_if = "Option::is_none")]
+    pub mar_l: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent: Option<i64>,
+    #[serde(rename = "lnSpc", skip_serializing_if = "Option::is_none")]
+    pub ln_spc: Option<i64>,
+    #[serde(rename = "spcBef", skip_serializing_if = "Option::is_none")]
+    pub spc_bef: Option<i64>,
+    #[serde(rename = "spcAft", skip_serializing_if = "Option::is_none")]
+    pub spc_aft: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -382,11 +426,21 @@ pub struct PptxTable {
 #[derive(Debug, Serialize)]
 pub struct PptxTableRow {
     pub cells: Vec<PptxTableCell>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct PptxTableCell {
     pub text: PptxTextFrame,
+    #[serde(rename = "gridSpan", skip_serializing_if = "Option::is_none")]
+    pub grid_span: Option<u32>,
+    #[serde(rename = "rowSpan", skip_serializing_if = "Option::is_none")]
+    pub row_span: Option<u32>,
+    #[serde(rename = "hMerge", skip_serializing_if = "Option::is_none")]
+    pub h_merge: Option<bool>,
+    #[serde(rename = "vMerge", skip_serializing_if = "Option::is_none")]
+    pub v_merge: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
